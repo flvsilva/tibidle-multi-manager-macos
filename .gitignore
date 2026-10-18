@@ -1,0 +1,25 @@
+# Build output and IDE caches.
+.build/
+.swiftpm/
+dist/
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+*.zip
+*.dmg
+*.log
+.DS_Store
+
+# Private profiles and settings, wherever copied.
+**/TibidleMultiManager-data/
+settings.json
+settings.json.*
+WebsiteDataStore/
+
+# Credentials and local notes.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+CLAUDE.md

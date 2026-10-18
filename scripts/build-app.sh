@@ -1,0 +1,59 @@
+#!/bin/zsh
+# Builds dist/Tibidle Multi-Manager.app and a ZIP for distribution.
+# Reads only the source tree: it never touches your profiles or settings.
+set -euo pipefail
+cd "${0:a:h}/.."
+
+APP_NAME="Tibidle Multi-Manager"
+BUNDLE_ID="io.github.flvsilva.tibidle-multi-manager"
+VERSION="${VERSION:-1.0.0}"
+DIST="dist"
+APP="$DIST/$APP_NAME.app"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+swift build -c release --arch arm64 --arch x86_64
+BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/TibidleMultiManager"
+
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp "$BIN" "$APP/Contents/MacOS/TibidleMultiManager"
+
+swift scripts/make-icon.swift "$WORK/icon.png"
+ICONSET="$WORK/AppIcon.iconset"
+mkdir -p "$ICONSET"
+for s in 16 32 128 256 512; do
+  sips -z $s $s "$WORK/icon.png" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s * 2)) $((s * 2)) "$WORK/icon.png" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+
+cat > "$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>$APP_NAME</string>
+  <key>CFBundleDisplayName</key><string>$APP_NAME</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+  <key>CFBundleExecutable</key><string>TibidleMultiManager</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSHumanReadableCopyright</key><string>MIT License</string>
+</dict>
+</plist>
+PLIST
+
+cp LICENSE README.md THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
+xattr -cr "$APP"
+codesign --force --deep --sign - "$APP"
+
+rm -f "$DIST/TibidleMultiManager-macOS.zip"
+ditto -c -k --keepParent "$APP" "$DIST/TibidleMultiManager-macOS.zip"
+echo "App:    $APP"
+echo "Pacote: $DIST/TibidleMultiManager-macOS.zip"
