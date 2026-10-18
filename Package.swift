@@ -7,6 +7,8 @@ let package = Package(
     targets: [
         .target(name: "TibidleCore"),
         .executableTarget(name: "TibidleMultiManager", dependencies: ["TibidleCore"]),
+        // Renders the dashboard with sample data to a PNG: swift run DashboardPreview out.png [light]
+        .executableTarget(name: "DashboardPreview", dependencies: ["TibidleCore"]),
         .testTarget(name: "TibidleCoreTests", dependencies: ["TibidleCore"]),
     ]
 )

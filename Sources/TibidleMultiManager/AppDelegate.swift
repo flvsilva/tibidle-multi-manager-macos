@@ -3,17 +3,41 @@ import TibidleCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: MainWindowController?
+    private var server: DashboardServer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = buildMenu()
-        let controller = MainWindowController(store: SettingsStore(root: SettingsStore.defaultRoot))
+        let root = SettingsStore.defaultRoot
+        let dashboard = DashboardStore(databaseURL: root.appendingPathComponent("dashboard.sqlite"))
+        let controller = MainWindowController(store: SettingsStore(root: root), dashboard: dashboard)
         self.controller = controller
+        let server = DashboardServer(store: dashboard)
+        server.onReady = { [weak controller] port in
+            controller?.showDashboardAddress(DashboardServer.networkURLs(port: port) + ["http://localhost:\(port)"])
+        }
+        server.start()
+        self.server = server
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc private func openDashboard(_ sender: Any?) {
+        guard let port = server?.port, let url = URL(string: "http://localhost:\(port)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func copyDashboardAddress(_ sender: Any?) {
+        guard let port = server?.port else { return }
+        let address = DashboardServer.networkURLs(port: port).last ?? "http://localhost:\(port)"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(address, forType: .string)
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ notification: Notification) { controller?.save() }
+    func applicationWillTerminate(_ notification: Notification) {
+        controller?.save()
+        server?.stop()
+    }
 
     @objc private func selectPosition(_ sender: NSMenuItem) { controller?.selectPosition(sender.tag) }
 
@@ -60,6 +84,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         accounts.addItem(withTitle: "Recarregar conta", action: #selector(MainWindowController.reloadSelected(_:)), keyEquivalent: "r")
         accounts.addItem(withTitle: "Limpar sessão da conta…", action: #selector(MainWindowController.clearSession(_:)), keyEquivalent: "")
         accounts.addItem(item("Ligar/desligar som", #selector(MainWindowController.toggleSound(_:)), "m", [.command, .shift]))
+
+        let dashboardMenu = submenu(main, "Dashboard")
+        let open = item("Abrir dashboard", #selector(openDashboard(_:)), "d", [.command, .shift])
+        open.target = self
+        dashboardMenu.addItem(open)
+        let copy = NSMenuItem(title: "Copiar endereço para a rede local", action: #selector(copyDashboardAddress(_:)), keyEquivalent: "")
+        copy.target = self
+        dashboardMenu.addItem(copy)
 
         let window = submenu(main, "Janela")
         window.addItem(withTitle: "Minimizar", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

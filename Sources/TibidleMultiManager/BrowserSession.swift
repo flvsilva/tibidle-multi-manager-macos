@@ -12,9 +12,13 @@ final class BrowserSession: NSObject {
     var displayName: () -> String = { "" }
     private var popups: [NSWindow] = []
 
-    init(account: Int) {
+    init(account: Int, dashboard: DashboardStore) {
         self.account = account
         let configuration = WKWebViewConfiguration()
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: CollectorScript.source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        configuration.userContentController.add(DashboardMessageHandler(account: account, store: dashboard),
+                                                name: CollectorScript.handlerName)
         configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: ProfileIdentity.identifiers[account])
         configuration.applicationNameForUserAgent = "Version/18.0 Safari/605.1.15"
         configuration.mediaTypesRequiringUserActionForPlayback = []
@@ -148,6 +152,24 @@ extension BrowserSession: WKUIDelegate {
 }
 
 private var observationKey = 0
+
+/// Receives the collector's whitelisted hunt data. Kept separate from the session because
+/// WKUserContentController retains its handlers.
+private final class DashboardMessageHandler: NSObject, WKScriptMessageHandler {
+    let account: Int
+    let store: DashboardStore
+
+    init(account: Int, store: DashboardStore) {
+        self.account = account
+        self.store = store
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, message.frameInfo.securityOrigin.host == BrowserSession.gameURL.host,
+              let json = message.body as? String else { return }
+        store.ingest(account: account, json: json)
+    }
+}
 
 extension BrowserSession: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {

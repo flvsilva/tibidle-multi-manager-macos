@@ -3,6 +3,7 @@ import TibidleCore
 
 final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     private let store: SettingsStore
+    private let dashboard: DashboardStore
     private var settings: AppSettings
     private var sessions: [BrowserSession] = []
     private var tabs: [TabButton] = []
@@ -20,9 +21,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     private lazy var clearButton = FlatButton(title: "Limpar sessão", target: self, action: #selector(clearSession(_:)))
     private lazy var reloadButton = FlatButton(title: "↻  Recarregar", target: self, action: #selector(reloadSelected(_:)))
 
-    init(store: SettingsStore) {
+    private let dashboardLabel = NSTextField(labelWithString: "")
+
+    init(store: SettingsStore, dashboard: DashboardStore) {
         self.store = store
+        self.dashboard = dashboard
         settings = store.load()
+        dashboard.setAccountNames(settings.accounts.map(\.name))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 940),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Tibidle Multi-Manager"
@@ -38,7 +43,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         window.setFrameAutosaveName("MainWindow")
 
         for account in 0..<accountCount {
-            let session = BrowserSession(account: account)
+            let session = BrowserSession(account: account, dashboard: dashboard)
             session.displayName = { [unowned self] in settings.accounts[account].name }
             session.onStatus = { [weak self] text in self?.setStatus(account, text) }
             session.setMuted(settings.accounts[account].muted)
@@ -110,7 +115,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let hint = NSTextField(labelWithString: "⌘1–4  alternar contas")
         hint.textColor = Theme.hintText
-        let statusBar = bar(Theme.topBar, [statusLabel, NSView(), hint], height: 28)
+        dashboardLabel.textColor = Theme.hintText
+        dashboardLabel.isSelectable = true
+        let statusBar = bar(Theme.topBar, [statusLabel, NSView(), dashboardLabel, hint], height: 28)
+        statusBar.setCustomSpacing(18, after: dashboardLabel)
 
         host.panes = panes
         let column = NSStackView(views: [topBar, divider(), toolBar, divider(), host, statusBar])
@@ -254,8 +262,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         nameField.stringValue = name
         tabs[selected].title = name
         panes[selected].header.title = name
+        dashboard.setAccountNames(settings.accounts.map(\.name))
         save()
         refreshControls()
+    }
+
+    func showDashboardAddress(_ urls: [String]) {
+        dashboardLabel.stringValue = urls.first.map { "Dashboard: \($0)" } ?? ""
+        dashboardLabel.toolTip = urls.joined(separator: "\n")
     }
 
     func controlTextDidChange(_ notification: Notification) {

@@ -15,6 +15,8 @@ Cada pessoa entra com suas próprias contas diretamente no site do jogo. Não h�
 - Trocar de visualização ou reorganizar não recarrega as páginas.
 - Páginas ocultas continuam rodando em velocidade normal (`inactiveSchedulingPolicy = .none`).
 - Zoom por conta (`⌘+`, `⌘-`, `⌘0`) e tela cheia (`⌃⌘F`).
+- **Limpar sessão** por conta: apaga cookies e dados só daquele perfil.
+- **Dashboard de hunts** no navegador, acessível pela rede local (veja abaixo).
 
 **Requisitos:** macOS 14 Sonoma ou mais recente, Apple Silicon ou Intel. É necessária internet para jogar.
 
@@ -44,12 +46,32 @@ O app é assinado *ad hoc* (sem Developer ID). Ao abrir um ZIP baixado da intern
 
 Fechar a janela encerra o aplicativo e mantém seus dados. Abrir o app de novo com ele já aberto apenas traz a janela para frente.
 
+## Dashboard de hunts
+
+Com o app aberto, acesse **Dashboard → Abrir dashboard** (`⇧⌘D`) ou, de outro aparelho na mesma rede, o endereço mostrado na barra inferior do app (por exemplo `http://192.168.0.10:8787`; **Dashboard → Copiar endereço para a rede local**). Se o macOS perguntar se o app pode aceitar conexões de entrada, permita.
+
+A página atualiza sozinha e mostra:
+
+- um cartão por conta com status (caçando, na cidade, desconectada), XP/h, lucro/h, loot, supplies, balance, dano, cura, monstros mais abatidos e HP/mana da party;
+- gráficos de XP/h e lucro/h nas últimas 1 h, 6 h, 12 h, 24 h ou 7 dias, com tabela;
+- o histórico de hunts encerradas: duração, motivo (morte, cap cheio, sem gold…), level, XP, loot, supplies, balance e mortes;
+- o progresso offline informado pelo jogo ao reconectar.
+
+**Como os dados são coletados.** Um script somente leitura (`Sources/TibidleCore/CollectorScript.swift`) roda apenas em `play.tibidle.com` e observa as mensagens que o jogo **recebe** do servidor pelo WebSocket. Ele não envia nada ao jogo, não toca nas mensagens enviadas (onde trafega a autenticação) e repassa ao app só uma lista fixa de campos de hunt; o resto, inclusive o token de sessão, é descartado. Os testes em `Tests/TibidleCoreTests/DashboardTests.swift` executam esse script e verificam isso.
+
+**Privacidade.** A dashboard é somente leitura e não tem senha: **qualquer pessoa na mesma rede** pode ver os dados de hunt (nomes dos personagens, levels, XP, gold). Ela não expõe logins, cookies nem permite ações. Use em redes de confiança.
+
+**Limitações.** Os dados só são registrados com o app aberto (o período fechado aparece como "progresso offline", sem detalhes). Se o jogo mudar o formato das mensagens, a coleta pode parar até ser ajustada. O histórico (amostras por minuto, guardadas por 30 dias, e hunts encerradas) fica em `dashboard.sqlite`.
+
+Para ver a página com dados de exemplo, sem abrir o jogo: `swift run DashboardPreview preview.png` (opções `light` e `phone`).
+
 ## Dados das contas
 
 Os dados ficam fora do repositório e do app:
 
 ```text
 ~/Library/Application Support/TibidleMultiManager/settings.json   # nomes, ordem, som e visualização
+~/Library/Application Support/TibidleMultiManager/dashboard.sqlite # histórico da dashboard
 ~/Library/WebKit/io.github.flvsilva.tibidle-multi-manager/        # cookies e armazenamento dos 4 perfis
 ```
 
@@ -61,7 +83,7 @@ O gerenciador não captura senhas. O site mantém a autenticação no perfil, co
 
 ```sh
 swift build          # compila
-swift test           # testes de configurações, ordem das abas e grade
+swift test           # configurações, abas, grade, coletor, histórico e servidor
 swift run            # roda sem empacotar (prefira o .app: o bundle ID separa os perfis)
 ```
 
@@ -74,6 +96,11 @@ swift run            # roda sem empacotar (prefira o .app: o bundle ID separa os
 | `Sources/TibidleMultiManager/BrowserSession.swift` | `WKWebView`, perfis, popups de login, som |
 | `Sources/TibidleMultiManager/BrowserHostView.swift` | Posicionamento dos painéis |
 | `Sources/TibidleMultiManager/Theme.swift` | Cores, botões e arraste das abas |
+| `Sources/TibidleCore/CollectorScript.swift` | Coletor somente leitura injetado no jogo |
+| `Sources/TibidleCore/DashboardStore.swift` | Estado ao vivo e histórico (SQLite) |
+| `Sources/TibidleCore/DashboardServer.swift`, `DashboardRouter.swift` | Servidor HTTP da rede local |
+| `Sources/TibidleCore/DashboardPage.swift` | Página da dashboard |
+| `Sources/DashboardPreview/main.swift` | Pré-visualização com dados de exemplo |
 | `scripts/build-app.sh` | Gera o `.app` e o ZIP |
 
 ## Limitações

@@ -1,0 +1,420 @@
+/// The dashboard served at `/`. Self-contained (no CDN), so it also works without internet.
+/// Every game value is written with `textContent`, never as HTML.
+public enum DashboardPage {
+    public static let html = #"""
+    <!doctype html>
+    <html lang="pt-BR">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tibidle Hunts</title>
+    <style>
+    :root {
+      color-scheme: light;
+      --page: #f6f5f1; --surface: #fcfcfb; --surface-2: #f0efea; --border: rgba(11,11,11,.10);
+      --ink: #0b0b0b; --ink-2: #52514e; --muted: #77756f; --grid: #e1e0d9; --axis: #c3c2b7;
+      --accent: #8a6a1f; --accent-bg: #f3e7c6;
+      --s0: #2a78d6; --s1: #eb6834; --s2: #1baf7a; --s3: #eda100;
+      --good: #0ca30c; --good-text: #006300; --warning: #b77800; --critical: #d03b3b; --bad-text: #b02a2a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --page: #0f1116; --surface: #161a21; --surface-2: #1d222b; --border: rgba(255,255,255,.09);
+        --ink: #eef0f4; --ink-2: #b9bfcb; --muted: #858d9b; --grid: #262b34; --axis: #343a45;
+        --accent: #e8d39c; --accent-bg: #413620;
+        --s0: #3987e5; --s1: #d95926; --s2: #199e70; --s3: #c98500;
+        --good: #0ca30c; --good-text: #3ccf3c; --warning: #fab219; --critical: #e66767; --bad-text: #ff8a8a;
+      }
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --page: #0f1116; --surface: #161a21; --surface-2: #1d222b; --border: rgba(255,255,255,.09);
+      --ink: #eef0f4; --ink-2: #b9bfcb; --muted: #858d9b; --grid: #262b34; --axis: #343a45;
+      --accent: #e8d39c; --accent-bg: #413620;
+      --s0: #3987e5; --s1: #d95926; --s2: #199e70; --s3: #c98500;
+      --good: #0ca30c; --good-text: #3ccf3c; --warning: #fab219; --critical: #e66767; --bad-text: #ff8a8a;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 48px; }
+    header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 18px; }
+    h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+    h1 span { color: var(--accent); }
+    h2 { font-size: 15px; margin: 0 0 10px; }
+    .meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+    .theme { background: none; border: 1px solid var(--border); color: var(--ink-2); border-radius: 6px; padding: 3px 9px; font: inherit; font-size: 12px; cursor: pointer; }
+
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 12px; margin-bottom: 22px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; min-width: 0; }
+    .card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+    .label { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .status { margin-left: auto; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); white-space: nowrap; }
+    .status i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; min-height: 18px; overflow-wrap: anywhere; }
+    .hero { display: flex; gap: 18px; margin: 4px 0 12px; }
+    .hero div { min-width: 0; }
+    .hero b { display: block; font-size: 24px; line-height: 1.15; font-weight: 650; letter-spacing: -.01em; }
+    .hero small, .stats small { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 10px; padding-top: 10px; border-top: 1px solid var(--grid); }
+    .stats b { display: block; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .pos { color: var(--good-text); } .neg { color: var(--bad-text); }
+    .party { margin-top: 10px; display: grid; gap: 5px; }
+    .member { display: grid; grid-template-columns: minmax(0, 1fr) 70px; gap: 2px 8px; font-size: 12px; align-items: center; }
+    .member span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+    .bars { display: grid; gap: 2px; }
+    .bar { height: 4px; border-radius: 2px; background: var(--grid); overflow: hidden; }
+    .bar > div { height: 100%; border-radius: 2px; }
+    .monsters { margin-top: 10px; font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+    .note { margin-top: 8px; font-size: 12px; color: var(--ink-2); background: var(--surface-2); border-radius: 6px; padding: 6px 8px; }
+    .empty { color: var(--muted); font-size: 13px; padding: 14px 0 4px; }
+
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .toolbar h2 { margin: 0 auto 0 0; }
+    .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+    .seg button { background: none; border: 0; color: var(--ink-2); font: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer; }
+    .seg button[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+    .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .legend i { width: 14px; height: 2px; border-radius: 1px; display: inline-block; }
+    .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 18px; }
+    .chart { position: relative; min-width: 0; }
+    .chart h3 { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--ink-2); }
+    .chart svg { display: block; width: 100%; height: 220px; overflow: visible; touch-action: pan-y; }
+    .chart .axis text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+           box-shadow: 0 4px 16px rgba(0,0,0,.18); padding: 7px 9px; font-size: 12px; min-width: 150px; display: none; z-index: 2; }
+    .tip .t { color: var(--muted); margin-bottom: 3px; }
+    .tip .r { display: flex; align-items: center; gap: 6px; }
+    .tip .r b { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 600; padding-left: 10px; }
+    details { margin-top: 10px; font-size: 12px; color: var(--ink-2); }
+    summary { cursor: pointer; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 500; font-size: 12px; }
+    td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+    td .swatch { display: inline-block; margin-right: 6px; vertical-align: 0; }
+    @media (max-width: 520px) { .hero b { font-size: 21px; } .stats { grid-template-columns: repeat(2, 1fr); } }
+    @media (forced-colors: active) { .swatch, .legend i, .status i { forced-color-adjust: none; } }
+    </style>
+    </head>
+    <body>
+    <main>
+      <header>
+        <h1><span>Tibidle</span> Hunts</h1>
+        <span class="meta" id="meta">Conectando…</span>
+        <button class="theme" id="theme" type="button">Tema</button>
+      </header>
+      <div class="cards" id="cards"></div>
+
+      <section class="section">
+        <div class="toolbar">
+          <h2>Ao longo do tempo</h2>
+          <div class="seg" id="range">
+            <button type="button" data-h="1">1h</button><button type="button" data-h="6">6h</button>
+            <button type="button" data-h="12" aria-pressed="true">12h</button><button type="button" data-h="24">24h</button>
+            <button type="button" data-h="168">7d</button>
+          </div>
+        </div>
+        <div class="legend" id="legend"></div>
+        <div class="charts">
+          <div class="chart" id="chart-xp"><h3>XP por hora</h3></div>
+          <div class="chart" id="chart-profit"><h3>Lucro por hora (loot − supplies)</h3></div>
+        </div>
+        <details><summary>Ver dados em tabela</summary><div class="table-wrap" id="series-table"></div></details>
+      </section>
+
+      <section class="section">
+        <div class="toolbar"><h2>Hunts encerradas</h2></div>
+        <div class="table-wrap" id="hunts"></div>
+      </section>
+    </main>
+    <div class="tip" id="tip"></div>
+    <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+    const SERIES = ['var(--s0)', 'var(--s1)', 'var(--s2)', 'var(--s3)'];
+    const REASONS = { stop: 'Parou', death: 'Morte', expired: 'Tempo esgotado', victory: 'Vitória', tower_top: 'Topo da torre',
+      no_gold: 'Sem gold', cap_full: 'Cap cheio', level_cap: 'Level máximo', prey_resync_failed: 'Falha no prey' };
+    const STATUS = {
+      hunting: ['Caçando', 'var(--good)'], city: ['Na cidade', 'var(--axis)'], offline: ['Desconectada', 'transparent'],
+      replaced: ['Sessão em outro lugar', 'var(--warning)'],
+    };
+    const VOC = { knight: 'Knight', paladin: 'Paladin', sorcerer: 'Sorcerer', druid: 'Druid', monk: 'Monk' };
+    let rangeHours = 12, lastAccounts = [], lastHistory = null;
+
+    function el(tag, props, ...children) {
+      const node = document.createElement(tag);
+      if (props) for (const [k, v] of Object.entries(props)) {
+        if (k === 'style') Object.assign(node.style, v);
+        else if (k === 'class') node.className = v;
+        else node.setAttribute(k, v);
+      }
+      for (const c of children.flat()) if (c != null && c !== false) node.append(c instanceof Node ? c : String(c));
+      return node;
+    }
+    const svg = (tag, attrs) => {
+      const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+      return node;
+    };
+    const num = (v) => { const n = typeof v === 'string' ? Number(v) : v; return Number.isFinite(n) ? n : 0; };
+    const full = new Intl.NumberFormat('pt-BR');
+    const short = new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 });
+    const fmt = (v) => Math.abs(num(v)) >= 100000 ? short.format(num(v)) : full.format(Math.round(num(v)));
+    const signed = (v) => (num(v) > 0 ? '+' : '') + fmt(v);
+    const duration = (ms) => {
+      const m = Math.max(0, Math.floor(num(ms) / 60000)), h = Math.floor(m / 60);
+      return h ? `${h}h ${String(m % 60).padStart(2, '0')}min` : `${m}min`;
+    };
+    const time = (ms) => new Date(ms).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const dateTime = (ms) => new Date(ms).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const perHour = (value, ms) => num(ms) > 60000 ? num(value) / (num(ms) / 3600000) : 0;
+    const topKills = (kills, n = 3) => Object.entries(kills || {}).sort((a, b) => b[1] - a[1]).slice(0, n);
+    const vocation = (v) => VOC[String(v || '').toLowerCase()] || v || '';
+
+    async function getJSON(path) {
+      const r = await fetch(path, { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    }
+
+    // ---- account cards ----
+    function stat(label, value, cls) { return el('div', null, el('small', null, label), el('b', cls ? { class: cls } : null, value)); }
+
+    function card(a) {
+      const [statusText, statusColor] = STATUS[a.status] || STATUS.offline;
+      const statusDot = el('i', { style: { background: statusColor, border: a.status === 'offline' ? '1px solid var(--muted)' : '0' } });
+      const top = el('div', { class: 'card-top' },
+        el('span', { class: 'swatch', style: { background: SERIES[a.index] } }),
+        el('span', { class: 'label' }, a.label),
+        el('span', { class: 'status' }, statusDot, statusText));
+      const state = a.state || {}, character = state.character || {}, account = a.account || {};
+      const who = character.name || account.name;
+      const level = character.level || account.level;
+      const sub = el('div', { class: 'sub' }, who ? `${who}${level ? ` · level ${level}` : ''}${a.training ? ' · treino' : ''}` : '');
+      const node = el('div', { class: 'card' }, top, sub);
+      const an = a.analyzer;
+      if (a.status === 'hunting' && an) {
+        const elapsed = an.elapsedMs, profit = num(an.lootGold) - num(an.suppliesGold);
+        node.append(el('div', { class: 'hero' },
+          el('div', null, el('small', null, 'XP/h'), el('b', null, fmt(an.xpPerHour))),
+          el('div', null, el('small', null, 'Lucro/h'), el('b', { class: profit >= 0 ? 'pos' : 'neg' }, signed(perHour(profit, elapsed))))));
+        node.append(el('div', { class: 'stats' },
+          stat('Tempo', duration(elapsed)), stat('XP', fmt(an.xp)), stat('Kills', fmt(an.killsTotal)),
+          stat('Loot', fmt(an.lootGold)), stat('Supplies', fmt(an.suppliesGold)), stat('Balance', signed(profit), profit >= 0 ? 'pos' : 'neg'),
+          stat('Dano/h', fmt(perHour(an.damageDealt, elapsed))), stat('Recebido/h', fmt(perHour(an.damageTaken, elapsed))),
+          stat('Cura/h', fmt(perHour(an.healingDone, elapsed)))));
+        const kills = topKills(an.kills);
+        if (kills.length) node.append(el('div', { class: 'monsters' }, 'Mais abatidos: ' + kills.map(([m, n]) => `${m} ×${fmt(n)}`).join(' · ')));
+      } else if (a.lastSummary) {
+        const s = a.lastSummary;
+        node.append(el('div', { class: 'note' },
+          `Última hunt: ${duration(num(s.elapsedSec) * 1000)} · ${REASONS[s.reason] || s.reason || ''} · XP/h ${fmt(s.xpPerHour)} · balance ${signed(s.balance)}`));
+      } else {
+        node.append(el('div', { class: 'empty' }, a.status === 'offline' ? 'Abra o jogo nesta aba do gerenciador.' : 'Sem hunt em andamento.'));
+      }
+      const party = state.party || (a.status !== 'hunting' ? a.roster : null);
+      if (party && party.length) {
+        node.append(el('div', { class: 'party' }, party.map((m) => el('div', { class: 'member' },
+          el('span', null, `${m.name || ''} · ${vocation(m.vocation)} ${m.level || ''}`),
+          m.maxHp ? el('div', { class: 'bars' },
+            el('div', { class: 'bar', title: `HP ${m.hp}/${m.maxHp}` }, el('div', { style: { width: `${Math.max(0, Math.min(100, 100 * num(m.hp) / num(m.maxHp)))}%`, background: 'var(--good)' } })),
+            num(m.maxMana) > 0 ? el('div', { class: 'bar', title: `Mana ${m.mana}/${m.maxMana}` }, el('div', { style: { width: `${Math.max(0, Math.min(100, 100 * num(m.mana) / num(m.maxMana)))}%`, background: 'var(--s0)' } })) : null)
+            : el('span')))));
+      }
+      if (a.offline && num(a.offline.elapsedMs) > 0) {
+        node.append(el('div', { class: 'note' },
+          `Enquanto o app estava fechado (${duration(a.offline.elapsedMs)}): +${fmt(a.offline.xp)} XP · ${fmt(a.offline.killsTotal)} kills · ${fmt(a.offline.lootGold)} gold de loot`));
+      }
+      return node;
+    }
+
+    async function refreshState() {
+      try {
+        const data = await getJSON('/api/state');
+        lastAccounts = data.accounts;
+        $('cards').replaceChildren(...data.accounts.map(card));
+        $('meta').textContent = `Atualizado às ${new Date(data.generatedAt).toLocaleTimeString('pt-BR')}`;
+        renderLegend();
+      } catch (_) {
+        $('meta').textContent = 'Sem conexão com o gerenciador — ele está aberto?';
+      }
+    }
+
+    // ---- charts ----
+    function renderLegend() {
+      $('legend').replaceChildren(...lastAccounts.map((a) => el('span', null, el('i', { style: { background: SERIES[a.index] } }), a.label)));
+    }
+
+    // Round tick step (1, 2, 2.5, 5 × 10^n) so the axis reads 0, 500 mil, 1 mi…
+    function niceStep(range) {
+      const raw = range / 4, p = 10 ** Math.floor(Math.log10(raw)), f = raw / p;
+      return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+    }
+    const axisFmt = (v) => Math.abs(v) >= 10000 ? short.format(v) : full.format(v);
+
+    function drawChart(host, series, valueIndex) {
+      host.querySelector('svg')?.remove();
+      host.querySelector('.empty')?.remove();
+      const entries = Object.entries(series).map(([k, pts]) => [Number(k), pts]).filter(([, pts]) => pts.length);
+      if (!entries.length) { host.append(el('div', { class: 'empty' }, 'Sem amostras neste período. Os dados aparecem durante as hunts.')); return; }
+      const W = Math.max(host.clientWidth, 300), H = 220, L = 52, R = 70, T = 10, B = 24;
+      const t1 = Date.now(), t0 = t1 - rangeHours * 3600000;
+      let lo = 0, hi = 0;
+      for (const [, pts] of entries) for (const p of pts) { lo = Math.min(lo, p[valueIndex]); hi = Math.max(hi, p[valueIndex]); }
+      const step = niceStep(Math.max(hi - lo, 1));
+      hi = Math.max(Math.ceil(hi / step) * step, step); lo = Math.floor(lo / step) * step;
+      const x = (t) => L + (t - t0) / (t1 - t0) * (W - L - R);
+      const y = (v) => T + (hi - v) / (hi - lo) * (H - T - B);
+      const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': host.querySelector('h3').textContent });
+      const axis = svg('g', { class: 'axis' });
+      for (let v = lo; v <= hi + step / 2; v += step) {
+        axis.append(svg('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: Math.abs(v) < step / 2 ? 'var(--axis)' : 'var(--grid)', 'stroke-width': 1 }));
+        const label = svg('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }); label.textContent = axisFmt(v); axis.append(label);
+      }
+      for (let i = 0; i <= 4; i++) {
+        const t = t0 + (t1 - t0) * i / 4;
+        const label = svg('text', { x: x(t), y: H - 6, 'text-anchor': i === 0 ? 'start' : i === 4 ? 'end' : 'middle' });
+        label.textContent = rangeHours > 24 ? dateTime(t) : time(t); axis.append(label);
+      }
+      root.append(axis);
+      const ends = [];
+      for (const [account, pts] of entries) {
+        let d = '', prev = null;
+        for (const p of pts) {
+          d += `${prev && p[0] - prev[0] <= 180000 ? 'L' : 'M'}${x(p[0]).toFixed(1)},${y(p[valueIndex]).toFixed(1)}`;
+          prev = p;
+        }
+        root.append(svg('path', { d, fill: 'none', stroke: SERIES[account], 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+        const last = pts[pts.length - 1];
+        ends.push({ account, y: y(last[valueIndex]), x: x(last[0]) });
+      }
+      // Direct labels at line ends, nudged apart so they never overlap.
+      ends.sort((a, b) => a.y - b.y);
+      for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 13);
+      for (const e of ends) {
+        const name = (lastAccounts[e.account] || {}).label || `Conta ${e.account + 1}`;
+        const label = svg('text', { x: Math.min(e.x + 6, W - R + 6), y: e.y + 4, fill: 'var(--ink-2)', 'font-size': 11 });
+        label.textContent = name.length > 10 ? name.slice(0, 9) + '…' : name;
+        root.append(label);
+      }
+      // Hover layer: crosshair + tooltip with every account's nearest sample.
+      const cross = svg('line', { y1: T, y2: H - B, stroke: 'var(--muted)', 'stroke-width': 1, visibility: 'hidden' });
+      const dots = svg('g', { visibility: 'hidden' });
+      const hit = svg('rect', { x: L, y: T, width: W - L - R, height: H - T - B, fill: 'transparent' });
+      root.append(cross, dots, hit);
+      const tip = $('tip');
+      const move = (ev) => {
+        const box = root.getBoundingClientRect(), px = (ev.clientX - box.left) * W / box.width;
+        const t = t0 + (px - L) / (W - L - R) * (t1 - t0);
+        const rows = [];
+        dots.replaceChildren();
+        for (const [account, pts] of entries) {
+          let best = null;
+          for (const p of pts) if (!best || Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p;
+          if (!best || Math.abs(best[0] - t) > Math.max(180000, (t1 - t0) / 60)) continue;
+          rows.push([account, best]);
+          dots.append(svg('circle', { cx: x(best[0]), cy: y(best[valueIndex]), r: 4, fill: SERIES[account], stroke: 'var(--surface)', 'stroke-width': 2 }));
+        }
+        if (!rows.length) { leave(); return; }
+        cross.setAttribute('x1', px); cross.setAttribute('x2', px);
+        cross.setAttribute('visibility', 'visible'); dots.setAttribute('visibility', 'visible');
+        tip.replaceChildren(el('div', { class: 't' }, rangeHours > 24 ? dateTime(rows[0][1][0]) : time(rows[0][1][0])),
+          ...rows.map(([account, p]) => el('div', { class: 'r' }, el('span', { class: 'swatch', style: { background: SERIES[account] } }),
+            (lastAccounts[account] || {}).label || `Conta ${account + 1}`, el('b', null, fmt(p[valueIndex])))));
+        tip.style.display = 'block';
+        const left = ev.clientX + 14 + tip.offsetWidth > window.innerWidth ? ev.clientX - tip.offsetWidth - 14 : ev.clientX + 14;
+        tip.style.left = `${left + window.scrollX}px`;
+        tip.style.top = `${ev.clientY + window.scrollY - tip.offsetHeight - 10}px`;
+      };
+      const leave = () => { cross.setAttribute('visibility', 'hidden'); dots.setAttribute('visibility', 'hidden'); tip.style.display = 'none'; };
+      hit.addEventListener('pointermove', move);
+      hit.addEventListener('pointerdown', move);
+      hit.addEventListener('pointerleave', leave);
+      host.append(root);
+    }
+
+    function renderSeriesTable(series) {
+      const rows = [];
+      for (const [account, pts] of Object.entries(series)) for (const p of pts) rows.push([Number(account), p]);
+      rows.sort((a, b) => b[1][0] - a[1][0]);
+      if (!rows.length) { $('series-table').replaceChildren(el('div', { class: 'empty' }, 'Sem amostras.')); return; }
+      $('series-table').replaceChildren(el('table', null,
+        el('thead', null, el('tr', null, el('th', null, 'Horário'), el('th', null, 'Conta'), el('th', { class: 'n' }, 'XP/h'),
+          el('th', { class: 'n' }, 'Loot/h'), el('th', { class: 'n' }, 'Lucro/h'))),
+        el('tbody', null, rows.slice(0, 300).map(([account, p]) => el('tr', null,
+          el('td', null, dateTime(p[0])), el('td', null, (lastAccounts[account] || {}).label || `Conta ${account + 1}`),
+          el('td', { class: 'n' }, fmt(p[1])), el('td', { class: 'n' }, fmt(p[2])), el('td', { class: 'n' }, signed(p[3])))))));
+    }
+
+    function renderCharts() {
+      if (!lastHistory) return;
+      drawChart($('chart-xp'), lastHistory.series, 1);
+      drawChart($('chart-profit'), lastHistory.series, 3);
+      renderSeriesTable(lastHistory.series);
+    }
+
+    async function refreshHistory() {
+      try { lastHistory = await getJSON(`/api/history?hours=${rangeHours}`); renderCharts(); } catch (_) {}
+    }
+
+    // ---- hunts table ----
+    async function refreshHunts() {
+      try {
+        const { hunts } = await getJSON('/api/hunts?limit=100');
+        if (!hunts.length) { $('hunts').replaceChildren(el('div', { class: 'empty' }, 'Nenhuma hunt encerrada registrada ainda.')); return; }
+        $('hunts').replaceChildren(el('table', null,
+          el('thead', null, el('tr', null, ['Fim', 'Conta', 'Personagens', 'Duração', 'Motivo'].map((h) => el('th', null, h)),
+            ['Level', 'XP', 'XP/h', 'Loot', 'Supplies', 'Balance', 'Mortes'].map((h) => el('th', { class: 'n' }, h)))),
+          el('tbody', null, hunts.map((h) => el('tr', null,
+            el('td', null, dateTime(h.endedAt)),
+            el('td', null, el('span', { class: 'swatch', style: { background: SERIES[h.account] } }), h.label),
+            el('td', null, (h.characters || []).join(', ') || '—'),
+            el('td', null, duration(num(h.elapsedSec) * 1000)),
+            el('td', null, REASONS[h.reason] || h.reason || '—'),
+            el('td', { class: 'n' }, h.level ? (h.level.end > h.level.start ? `${h.level.start}→${h.level.end}` : h.level.end) : '—'),
+            el('td', { class: 'n' }, fmt(h.xp)), el('td', { class: 'n' }, fmt(h.xpPerHour)),
+            el('td', { class: 'n' }, fmt(h.lootGold)), el('td', { class: 'n' }, fmt(h.suppliesGold)),
+            el('td', { class: 'n ' + (num(h.balance) >= 0 ? 'pos' : 'neg') }, signed(h.balance)),
+            el('td', { class: 'n' }, fmt(h.deaths)))))));
+      } catch (_) {}
+    }
+
+    // ---- controls ----
+    $('range').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button'); if (!b) return;
+      rangeHours = Number(b.dataset.h);
+      for (const x of $('range').children) x.setAttribute('aria-pressed', String(x === b));
+      try { localStorage.setItem('range', String(rangeHours)); } catch (_) {}
+      refreshHistory();
+    });
+    $('theme').addEventListener('click', () => {
+      const dark = document.documentElement.dataset.theme
+        ? document.documentElement.dataset.theme === 'dark'
+        : matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+      try { localStorage.setItem('theme', document.documentElement.dataset.theme); } catch (_) {}
+    });
+    try {
+      const theme = localStorage.getItem('theme'); if (theme) document.documentElement.dataset.theme = theme;
+      const saved = Number(localStorage.getItem('range'));
+      const button = [...$('range').children].find((b) => Number(b.dataset.h) === saved);
+      if (button) button.click();
+    } catch (_) {}
+    let resizeTimer;
+    addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderCharts, 150); });
+
+    refreshState().then(() => { refreshHistory(); refreshHunts(); });
+    setInterval(refreshState, 3000);
+    setInterval(refreshHistory, 60000);
+    setInterval(refreshHunts, 30000);
+    </script>
+    </body>
+    </html>
+    """#
+}
