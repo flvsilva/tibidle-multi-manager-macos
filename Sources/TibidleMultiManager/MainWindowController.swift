@@ -17,6 +17,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     private let statusLabel = NSTextField(labelWithString: "Preparando os quatro perfis…")
     private lazy var layoutButton = FlatButton(title: "", target: self, action: #selector(toggleLayout(_:)))
     private lazy var soundButton = FlatButton(title: "", target: self, action: #selector(toggleSound(_:)))
+    private lazy var clearButton = FlatButton(title: "Limpar sessão", target: self, action: #selector(clearSession(_:)))
     private lazy var reloadButton = FlatButton(title: "↻  Recarregar", target: self, action: #selector(reloadSelected(_:)))
 
     init(store: SettingsStore) {
@@ -97,10 +98,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         nameField.layer?.borderWidth = 1
         nameField.layer?.cornerRadius = 3
         nameField.widthAnchor.constraint(equalToConstant: 190).isActive = true
+        clearButton.toolTip = "Sair desta conta apagando cookies e dados salvos somente deste perfil"
         reloadButton.toolTip = "Recarregar somente esta conta (⌘R)"
         soundButton.toolTip = BrowserSession.canMute ? "Ligar ou desligar o som desta conta" : "Esta versão do macOS não permite silenciar a página"
         let saveButton = FlatButton(title: "Salvar nome", target: self, action: #selector(saveName(_:)))
-        let toolBar = bar(Theme.toolBar, [nameLabel, nameField, saveButton, NSView(), soundButton, reloadButton], height: 50)
+        let toolBar = bar(Theme.toolBar, [nameLabel, nameField, saveButton, NSView(), clearButton, soundButton, reloadButton], height: 50)
         toolBar.setCustomSpacing(10, after: nameLabel)
 
         statusLabel.textColor = Theme.mutedText
@@ -224,6 +226,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     }
 
     @objc func reloadSelected(_ sender: Any?) { sessions[selected].reload() }
+
+    @objc func clearSession(_ sender: Any?) {
+        guard let window else { return }
+        let account = selected
+        let alert = NSAlert()
+        alert.messageText = "Limpar a sessão de \(settings.accounts[account].name)?"
+        alert.informativeText = "Apaga login, cookies e dados do site salvos somente neste perfil. As outras contas não são afetadas. Você precisará entrar de novo nesta aba."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Limpar sessão")
+        alert.addButton(withTitle: "Cancelar")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            setStatus(account, "Limpando sessão…")
+            sessions[account].clearProfile { [weak self] in self?.setStatus(account, "Sessão limpa — entre novamente") }
+        }
+    }
 
     @objc func zoomIn(_ sender: Any?) { sessions[selected].webView.pageZoom = min(sessions[selected].webView.pageZoom + 0.1, 3) }
     @objc func zoomOut(_ sender: Any?) { sessions[selected].webView.pageZoom = max(sessions[selected].webView.pageZoom - 0.1, 0.3) }

@@ -35,6 +35,16 @@ final class BrowserSession: NSObject {
         if webView.url == nil { start() } else { webView.reload() }
     }
 
+    /// Deletes every cookie and storage entry of this account's profile only, then reloads.
+    func clearProfile(completion: @escaping () -> Void) {
+        closePopups()
+        let store = webView.configuration.websiteDataStore
+        store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) { [weak self] in
+            self?.start()
+            completion()
+        }
+    }
+
     static let canMute: Bool = WKWebView.instancesRespond(to: NSSelectorFromString("_setPageMuted:"))
 
     /// WKWebView has no public mute API; this uses the long-standing WebKit SPI when present.

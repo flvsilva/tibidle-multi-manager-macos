@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         accounts.addItem(.separator())
         accounts.addItem(withTitle: "Recarregar conta", action: #selector(MainWindowController.reloadSelected(_:)), keyEquivalent: "r")
+        accounts.addItem(withTitle: "Limpar sessão da conta…", action: #selector(MainWindowController.clearSession(_:)), keyEquivalent: "")
         accounts.addItem(item("Ligar/desligar som", #selector(MainWindowController.toggleSound(_:)), "m", [.command, .shift]))
 
         let window = submenu(main, "Janela")
