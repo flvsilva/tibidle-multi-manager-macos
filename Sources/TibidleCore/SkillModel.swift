@@ -304,7 +304,9 @@ public enum SkillAdvisor {
                                           "dps": (current.share[spell.name] ?? 0) * calibration.factor]
                 if let base = baseDamage(spell, member: member) { row["perCast"] = base * multiplier }
                 if multiplier < 0.5 && coverage > 0.3 { row["warning"] = "Maioria dos alvos resiste a este elemento." }
-                else if multiplier >= 1.1 && coverage > 0.3 { row["note"] = "Elemento forte contra os alvos." }
+                else if (current.share[spell.name] ?? 0) == 0 && multiplier > 0 {
+                    row["warning"] = "Nunca dispara: uma skill de prioridade maior está sempre pronta ou o mínimo de criaturas não é atingido."
+                } else if multiplier >= 1.1 && coverage > 0.3 { row["note"] = "Elemento forte contra os alvos." }
                 skills.append(row)
             }
             var entry: [String: Any] = ["name": member.name, "vocation": member.vocation, "skills": skills,

@@ -122,10 +122,31 @@ public enum DashboardPage {
     .tip .t { color: var(--muted); margin-bottom: 3px; }
     .tip .r { display: flex; align-items: center; gap: 6px; }
     .tip .r b { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 600; padding-left: 10px; }
-    .skills { margin-top: 8px; }
-    .skills table { width: 100%; border-collapse: collapse; margin: 6px 0; }
-    .skills td, .skills th { text-align: left; padding: 2px 6px 2px 0; font-weight: 400; font-variant-numeric: tabular-nums; }
-    .skills .warn { color: var(--warn-text); } .skills .good { color: var(--good); }
+    .skills-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; margin-top: 10px; padding: 8px 10px;
+      font: inherit; font-size: 12px; color: var(--ink); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+    .skills-btn:hover { border-color: var(--axis); }
+    .skills-btn span { color: var(--ink-2); }
+    .modal { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.5); }
+    .modal.open { display: flex; }
+    .modal-box { width: min(760px, 100%); max-height: min(86vh, 900px); display: flex; flex-direction: column; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+    .modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+    .modal-head h2 { margin: 0; flex: 1; font-size: 16px; font-weight: 650; }
+    .modal-head button { font: inherit; font-size: 20px; line-height: 1; padding: 2px 8px; color: var(--ink-2); background: none; border: 0; cursor: pointer; border-radius: 6px; }
+    .modal-head button:hover { background: var(--surface-2); }
+    .modal-body { padding: 14px 16px 16px; overflow-y: auto; }
+    .sk-member { padding: 12px; margin-bottom: 12px; background: var(--surface-2); border-radius: 10px; }
+    .sk-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 8px; }
+    .sk-top b { font-size: 15px; }
+    .sk-top span { font-size: 12px; color: var(--ink-2); }
+    .sk-row { display: grid; grid-template-columns: minmax(110px, 1.3fr) 60px 52px minmax(80px, 1.2fr); gap: 4px 10px; align-items: center; padding: 5px 0; font-size: 12px; border-top: 1px solid var(--border); }
+    .sk-row.head { border-top: 0; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    .sk-bar { display: flex; align-items: center; gap: 8px; }
+    .sk-bar .bar { flex: 1; height: 6px; }
+    .sk-cost { grid-column: 1 / -1; color: var(--muted); font-size: 11px; }
+    .sk-note { margin-top: 8px; padding: 6px 8px; font-size: 12px; border-radius: 6px; background: var(--surface); }
+    .sk-note.warn { color: var(--warn-text); } .sk-note.good { color: var(--good-text); }
+    .sk-foot { font-size: 11px; color: var(--muted); }
     details { margin-top: 10px; font-size: 12px; color: var(--ink-2); }
     summary { cursor: pointer; }
 
@@ -140,6 +161,12 @@ public enum DashboardPage {
     </style>
     </head>
     <body>
+    <div class="modal" id="skills-modal" role="dialog" aria-modal="true" aria-labelledby="skills-title">
+      <div class="modal-box">
+        <div class="modal-head"><h2 id="skills-title">Skills</h2><button type="button" id="skills-close" aria-label="Fechar">×</button></div>
+        <div class="modal-body" id="skills-body"></div>
+      </div>
+    </div>
     <main>
       <header>
         <h1><span>Tibidle</span> Hunts</h1>
@@ -252,30 +279,59 @@ public enum DashboardPage {
 
     const ELEMENT = { COMBAT_PHYSICALDAMAGE: 'físico', COMBAT_FIREDAMAGE: 'fogo', COMBAT_ENERGYDAMAGE: 'energia', COMBAT_EARTHDAMAGE: 'terra',
       COMBAT_ICEDAMAGE: 'gelo', COMBAT_HOLYDAMAGE: 'sagrado', COMBAT_DEATHDAMAGE: 'morte' };
-    function skills(a) {
+    let openSkills = null;
+    function skillsButton(a) {
       const d = a.skills;
       if (!d || !d.members || !d.members.length) return null;
       const total = d.members.reduce((sum, m) => sum + num(m.dps), 0);
-      const box = el('details', { class: 'skills' }, el('summary', null,
-        `Skills · ~${fmt(total)} dano/s estimado${d.calibrated ? ` (calibrado com ${d.samples} hunts)` : ' (sem calibração ainda)'}`));
-      for (const m of d.members) {
-        const rows = (m.skills || []).map((s) => el('tr', null,
-          el('td', null, s.name), el('td', null, ELEMENT[s.element] || s.element),
-          el('td', { class: s.warning ? 'warn' : s.note ? 'good' : '' }, `${Math.round(num(s.multiplier) * 100)}%`),
-          el('td', null, `${fmt(s.dps)}/s`), el('td', null, `${fmt(s.mana)} mana · ${s.cooldown}s`)));
-        box.append(el('div', { class: 'mhead' }, `${m.name} · ~${fmt(m.dps)}/s · ${fmt(m.manaPerMinute)} mana/min`),
-          el('table', null, el('tr', null, el('th', null, 'Skill'), el('th', null, 'Elemento'), el('th', null, 'Dano nos alvos'),
-            el('th', null, 'Contribuição'), el('th', null, 'Custo')), rows));
-        for (const s of m.skills || []) if (s.warning) box.append(el('div', { class: 'madvice warn' }, `${s.name}: ${s.warning}`));
-        for (const sg of m.suggestions || []) {
-          const what = sg.replace ? `trocar ${sg.replace} por ${sg.add}` : `adicionar ${sg.add}`;
-          const mana = num(sg.manaPerMinuteDelta);
-          box.append(el('div', { class: 'madvice good' }, `Sugestão: ${what} (${sg.fromZero ? 'hoje causa 0 de dano' : `+${Math.round(num(sg.gain) * 100)}% dano estimado`}, ${mana >= 0 ? '+' : ''}${fmt(mana)} mana/min).`));
-        }
-      }
-      box.append(el('div', { class: 'madvice' }, `Estimativa por modelo: pull médio de ${d.crowd} criaturas${d.coverage < 1 ? `, resistências conhecidas para ${Math.round(num(d.coverage) * 100)}% dos kills` : ''}. É um guia, não uma garantia.`));
-      return box;
+      const tips = d.members.reduce((sum, m) => sum + (m.suggestions || []).length, 0);
+      const btn = el('button', { class: 'skills-btn', type: 'button' }, el('b', null, 'Análise de skills'),
+        el('span', null, `~${fmt(total)}/s${tips ? ` · ${tips} sugest${tips > 1 ? 'ões' : 'ão'}` : ''}`));
+      btn.addEventListener('click', () => { openSkills = a.index; renderSkillsModal(); });
+      return btn;
     }
+    function skillsBody(a) {
+      const d = a.skills;
+      const body = el('div');
+      if (!d || !d.members) return el('div', { class: 'empty' }, 'Sem dados de skills no momento (a conta precisa estar caçando).');
+      for (const m of d.members) {
+        const top = Math.max(1, ...(m.skills || []).map((s) => num(s.dps)));
+        const box = el('div', { class: 'sk-member' }, el('div', { class: 'sk-top' }, el('b', null, m.name),
+          el('span', null, `${fmt(m.dps)} dano/s`), el('span', null, `${fmt(m.manaPerMinute)} mana/min`)));
+        box.append(el('div', { class: 'sk-row head' }, el('span', null, 'Skill'), el('span', null, 'Elemento'), el('span', null, 'Alvos'), el('span', null, 'Contribuição')));
+        for (const sk of m.skills || []) {
+          const cls = num(sk.multiplier) < 0.5 ? 'warn' : num(sk.multiplier) >= 1.1 ? 'good' : '';
+          box.append(el('div', { class: 'sk-row' }, el('span', null, sk.name), el('span', null, ELEMENT[sk.element] || sk.element),
+            el('span', { class: cls ? 'sk-note ' + cls : '', style: cls ? { margin: 0, padding: '0 4px', background: 'none' } : {} }, `${Math.round(num(sk.multiplier) * 100)}%`),
+            el('div', { class: 'sk-bar' }, el('div', { class: 'bar' }, el('div', { style: { width: `${100 * num(sk.dps) / top}%`, background: 'var(--s0)' } })),
+              el('span', { class: 'mcount' }, `${fmt(sk.dps)}/s`)),
+            el('span', { class: 'sk-cost' }, `${fmt(sk.mana)} mana · recarga ${sk.cooldown}s`)));
+        }
+        for (const sk of m.skills || []) if (sk.warning) box.append(el('div', { class: 'sk-note warn' }, `${sk.name}: ${sk.warning}`));
+        for (const sg of m.suggestions || []) {
+          const what = sg.replace ? `Trocar ${sg.replace} por ${sg.add}` : `Adicionar ${sg.add}`;
+          const mana = num(sg.manaPerMinuteDelta);
+          box.append(el('div', { class: 'sk-note good' }, `${what}: ${sg.fromZero ? 'hoje causa 0 de dano' : `+${Math.round(num(sg.gain) * 100)}% de dano estimado`}, ${mana >= 0 ? '+' : ''}${fmt(mana)} mana/min.`));
+        }
+        if (!(m.suggestions || []).length && !(m.skills || []).some((sk) => sk.warning)) box.append(el('div', { class: 'sk-note' }, 'Nenhuma troca com ganho relevante encontrada.'));
+        body.append(box);
+      }
+      body.append(el('div', { class: 'sk-foot' },
+        `${d.calibrated ? `Calibrado com ${d.samples} hunts suas.` : 'Ainda sem calibração (precisa de 3 hunts completas).'} Pull médio assumido: ${d.crowd} criaturas.` +
+        `${d.coverage < 1 ? ` Resistências conhecidas para ${Math.round(num(d.coverage) * 100)}% dos kills.` : ''} É uma estimativa por modelo, não uma garantia.`));
+      return body;
+    }
+    function renderSkillsModal() {
+      const modal = $('skills-modal');
+      const a = openSkills === null ? null : lastAccounts.find((x) => x.index === openSkills);
+      if (!a) { modal.classList.remove('open'); openSkills = null; return; }
+      const scroll = $('skills-body').scrollTop;
+      $('skills-title').textContent = `Skills · ${a.label}`;
+      $('skills-body').replaceChildren(skillsBody(a));
+      $('skills-body').scrollTop = scroll;
+      modal.classList.add('open');
+    }
+    function closeSkills() { openSkills = null; renderSkillsModal(); }
 
     function missions(a) {
       const d = a.daily;
@@ -382,7 +438,7 @@ public enum DashboardPage {
         const when = inv.next.live ? 'em andamento' : `começa às ${time(inv.next.startAt)} (${until(inv.next.startAt)})`;
         node.append(el('div', { class: 'note' }, `${inv.name}${inv.boss ? ` · ${inv.boss}` : ''}: ${inv.joined ? 'inscrito' : 'não inscrito'} · ${when}`));
       }
-      const sk = skills(a);
+      const sk = skillsButton(a);
       if (sk) node.append(sk);
       if (a.supply) {
         for (const x of a.supply.alerts || []) node.append(el('div', { class: 'alert ' + x.level }, x.text));
@@ -409,6 +465,10 @@ public enum DashboardPage {
       return node;
     }
 
+    $('skills-close').addEventListener('click', closeSkills);
+    $('skills-modal').addEventListener('click', (e) => { if (e.target === $('skills-modal')) closeSkills(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSkills(); });
+
     async function refreshState() {
       try {
         const data = await getJSON('/api/state');
@@ -417,6 +477,7 @@ public enum DashboardPage {
         $('cards').replaceChildren(...data.accounts.map(card));
         $('meta').textContent = `Atualizado às ${new Date(data.generatedAt).toLocaleTimeString('pt-BR')}`;
         renderLegend();
+        renderSkillsModal();
       } catch (_) {
         $('meta').textContent = 'Sem conexão com o gerenciador — ele está aberto?';
       }

@@ -12,10 +12,32 @@ let store = DashboardStore(databaseURL: nil, now: { clock })
 store.setAccountNames(["Main EK", "Druid farm", "Paladin", "Conta 4"])
 
 let parties = [
-    #"[{"name":"Sir Bruno","vocation":"knight","level":187,"hp":2100,"maxHp":2650,"mana":700,"maxMana":900},{"name":"Lia Heals","vocation":"druid","level":180,"hp":1000,"maxHp":1100,"mana":4100,"maxMana":5200}]"#,
+    #"[{"name":"Sir Bruno","vocation":"knight","level":187,"hp":2100,"maxHp":2650,"mana":700,"maxMana":900},{"name":"Lia Heals","vocation":"Elder Druid","level":180,"hp":1000,"maxHp":1100,"mana":4100,"maxMana":5200,"skillLevels":{"melee":12,"distance":10,"magic":115},"kit":[{"name":"Ultimate Terra Strike","mana":100,"cooldownMs":30000},{"name":"Flame Strike","mana":20,"cooldownMs":2000},{"name":"Ice Strike","mana":20,"cooldownMs":2000}]}]"#,
     #"[{"name":"Mossy","vocation":"druid","level":122,"hp":700,"maxHp":800,"mana":2000,"maxMana":3300}]"#,
     #"[{"name":"Arrowtip","vocation":"paladin","level":143,"hp":1200,"maxHp":1500,"mana":1300,"maxMana":2100}]"#,
 ]
+func strike(_ name: String, _ type: String, level: Int, mana: Int, cooldown: Int = 2000, min: String = "((level / 5) + (maglevel * 1.403) + 8)",
+            max: String = "((level / 5) + (maglevel * 2.203) + 13)", area: Int? = nil) -> [String: Any] {
+    var spell: [String: Any] = ["name": name, "available": true, "group": "attack", "level": level, "mana": mana,
+                                "vocations": ["druid", "elder druid", "sorcerer", "master sorcerer"], "cooldownMs": cooldown,
+                                "groupCooldownMs": 2000, "combatType": type, "formulaType": "levelmagic", "formula": ["min": min, "max": max]]
+    if let area { spell["area"] = "AREA"; spell["areaCells"] = area }
+    return spell
+}
+let ultimate = (min: "((level / 5) + (maglevel * 4.5) + 35)", max: "((level / 5) + (maglevel * 7.3) + 55)")
+let spellList: [[String: Any]] = [
+    strike("Flame Strike", "COMBAT_FIREDAMAGE", level: 14, mana: 20), strike("Ice Strike", "COMBAT_ICEDAMAGE", level: 15, mana: 20),
+    strike("Ultimate Terra Strike", "COMBAT_EARTHDAMAGE", level: 90, mana: 100, cooldown: 30000, min: ultimate.min, max: ultimate.max),
+    strike("Ultimate Ice Strike", "COMBAT_ICEDAMAGE", level: 100, mana: 100, cooldown: 30000, min: ultimate.min, max: ultimate.max),
+    strike("Eternal Winter", "COMBAT_ICEDAMAGE", level: 60, mana: 600, cooldown: 40000, min: "((level / 5) + (maglevel * 6))",
+           max: "((level / 5) + (maglevel * 9))", area: 40),
+]
+store.setSpellCatalog(SpellCatalog(json: try! JSONSerialization.data(withJSONObject: spellList))!)
+var creatures = CreatureCatalog()
+creatures.add(name: "Dragon", elements: [["type": "COMBAT_FIREDAMAGE", "percent": 100], ["type": "COMBAT_EARTHDAMAGE", "percent": 20], ["type": "COMBAT_ICEDAMAGE", "percent": -10]])
+creatures.add(name: "Dragon Lord", elements: [["type": "COMBAT_FIREDAMAGE", "percent": 100], ["type": "COMBAT_ICEDAMAGE", "percent": -10]])
+creatures.add(name: "Dragon Hatchling", elements: [["type": "COMBAT_FIREDAMAGE", "percent": 100]])
+store.setCreatures(creatures)
 store.setHuntCatalog(HuntCatalog(json: Data("""
 {"hunts":[
  {"id":10,"title":"Dragon Lair","island":"Edron","monsters":["Dragon","Dragon Hatchling"]},
@@ -64,7 +86,8 @@ clock = Date()
 let server = DashboardServer(store: store)
 let app = NSApplication.shared
 app.setActivationPolicy(.prohibited)
-let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: 2600))
+let modal = CommandLine.arguments.contains("modal")
+let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: modal ? 900 : 2600))
 if light { webView.appearance = NSAppearance(named: .aqua) } else { webView.appearance = NSAppearance(named: .darkAqua) }
 let window = NSWindow(contentRect: webView.frame, styleMask: [.borderless], backing: .buffered, defer: false)
 window.contentView = webView
@@ -74,10 +97,11 @@ window.orderFrontRegardless()
 server.onReady = { port in
     webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/")!))
     DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+        if modal { webView.evaluateJavaScript("document.querySelector('.skills-btn').click()", completionHandler: nil) }
         if CommandLine.arguments.contains("expand") { webView.evaluateJavaScript("document.querySelector('tr.run').click()", completionHandler: nil) }
-        webView.evaluateJavaScript("document.querySelector('main').scrollHeight") { height, _ in
+        webView.evaluateJavaScript(modal ? "900" : "document.querySelector('main').scrollHeight") { height, _ in
             let config = WKSnapshotConfiguration()
-            config.rect = NSRect(x: 0, y: 0, width: width, height: min((height as? Double ?? 1600) + 40, 2600))
+            config.rect = NSRect(x: 0, y: 0, width: width, height: modal ? 900 : min((height as? Double ?? 1600) + 40, 2600))
             webView.takeSnapshot(with: config) { image, error in
                 if let image, let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
                     try? png.write(to: URL(fileURLWithPath: output))
