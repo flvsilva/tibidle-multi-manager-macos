@@ -55,9 +55,13 @@ A página atualiza sozinha e mostra:
 - um cartão por conta com status (caçando, na cidade, desconectada), XP/h, lucro/h, loot, supplies, balance, dano, cura, monstros mais abatidos e HP/mana da party;
 - gráficos de XP/h e lucro/h nas últimas 1 h, 6 h, 12 h, 24 h ou 7 dias, com tabela;
 - o histórico de hunts encerradas: duração, motivo (morte, cap cheio, sem gold…), level, XP, loot, supplies, balance e mortes;
+- as **missões diárias** de cada conta: progresso, tempo até o reset e se a hunt atual conta ou não;
+- a **hunt sugerida** para cada missão de monstro, quando a hunt atual não conta ou nada está em andamento;
 - o progresso offline informado pelo jogo ao reconectar.
 
-**Como os dados são coletados.** Um script somente leitura (`Sources/TibidleCore/CollectorScript.swift`) roda apenas em `play.tibidle.com` e observa as mensagens que o jogo **recebe** do servidor pelo WebSocket. Ele não envia nada ao jogo, não toca nas mensagens enviadas (onde trafega a autenticação) e repassa ao app só uma lista fixa de campos de hunt; o resto, inclusive o token de sessão, é descartado. Os testes em `Tests/TibidleCoreTests/DashboardTests.swift` executam esse script e verificam isso.
+**Missões diárias.** Cada missão de monstro lista os mapas que têm o monstro-alvo, usando a lista pública de hunts do jogo (`https://play.tibidle.com/hunts`), a mesma que o jogo usa no botão "Explorar". O app baixa essa lista sozinho, sem cookies nem login, guarda uma cópia em `hunts-catalog.json` e atualiza a cada 12 horas. Estados exibidos: *Contando nesta hunt*, *A hunt atual não conta*, *Pendente*, *Concluída — resgate no jogo*, *Resgatada*, além de *Elite* e *Forja* (que não dependem de hunt). A regra "esta hunt conta" é inferida dos monstros do mapa; o app não consegue confirmar as regras do servidor.
+
+**Como os dados são coletados.** Um script somente leitura (`Sources/TibidleCore/CollectorScript.swift`) roda apenas em `play.tibidle.com` e observa as mensagens que o jogo **recebe** do servidor pelo WebSocket. Ele não envia nada ao jogo, não toca nas mensagens enviadas (onde trafega a autenticação) e repassa ao app só uma lista fixa de campos de hunt e das duas missões diárias (sem calendário de login, sequência, lista semanal nem prêmios além do nome e da quantidade); o resto, inclusive o token de sessão, é descartado. Os testes em `Tests/TibidleCoreTests/DashboardTests.swift` executam esse script e verificam isso.
 
 **Privacidade.** A dashboard é somente leitura e não tem senha: **qualquer pessoa na mesma rede** pode ver os dados de hunt (nomes dos personagens, levels, XP, gold). Ela não expõe logins, cookies nem permite ações. Use em redes de confiança.
 
@@ -72,6 +76,7 @@ Os dados ficam fora do repositório e do app:
 ```text
 ~/Library/Application Support/TibidleMultiManager/settings.json   # nomes, ordem, som e visualização
 ~/Library/Application Support/TibidleMultiManager/dashboard.sqlite # histórico da dashboard
+~/Library/Application Support/TibidleMultiManager/hunts-catalog.json # cópia da lista pública de hunts
 ~/Library/WebKit/io.github.flvsilva.tibidle-multi-manager/        # cookies e armazenamento dos 4 perfis
 ```
 
@@ -99,6 +104,7 @@ swift run            # roda sem empacotar (prefira o .app: o bundle ID separa os
 | `Sources/TibidleCore/CollectorScript.swift` | Coletor somente leitura injetado no jogo |
 | `Sources/TibidleCore/DashboardStore.swift` | Estado ao vivo e histórico (SQLite) |
 | `Sources/TibidleCore/DashboardServer.swift`, `DashboardRouter.swift` | Servidor HTTP da rede local |
+| `Sources/TibidleCore/HuntCatalog.swift`, `HuntCatalogLoader.swift`, `MissionAdvisor.swift` | Lista de hunts e avaliação das missões diárias |
 | `Sources/TibidleCore/DashboardPage.swift` | Página da dashboard |
 | `Sources/DashboardPreview/main.swift` | Pré-visualização com dados de exemplo |
 | `scripts/build-app.sh` | Gera o `.app` e o ZIP |

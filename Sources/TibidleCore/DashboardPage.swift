@@ -15,7 +15,7 @@ public enum DashboardPage {
       --ink: #0b0b0b; --ink-2: #52514e; --muted: #77756f; --grid: #e1e0d9; --axis: #c3c2b7;
       --accent: #8a6a1f; --accent-bg: #f3e7c6;
       --s0: #2a78d6; --s1: #eb6834; --s2: #1baf7a; --s3: #eda100;
-      --good: #0ca30c; --good-text: #006300; --warning: #b77800; --critical: #d03b3b; --bad-text: #b02a2a;
+      --good: #0ca30c; --good-text: #006300; --warning: #b77800; --warn-text: #8a5a00; --critical: #d03b3b; --bad-text: #b02a2a;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
@@ -24,7 +24,7 @@ public enum DashboardPage {
         --ink: #eef0f4; --ink-2: #b9bfcb; --muted: #858d9b; --grid: #262b34; --axis: #343a45;
         --accent: #e8d39c; --accent-bg: #413620;
         --s0: #3987e5; --s1: #d95926; --s2: #199e70; --s3: #c98500;
-        --good: #0ca30c; --good-text: #3ccf3c; --warning: #fab219; --critical: #e66767; --bad-text: #ff8a8a;
+        --good: #0ca30c; --good-text: #3ccf3c; --warning: #fab219; --warn-text: #fab219; --critical: #e66767; --bad-text: #ff8a8a;
       }
     }
     :root[data-theme="dark"] {
@@ -33,7 +33,7 @@ public enum DashboardPage {
       --ink: #eef0f4; --ink-2: #b9bfcb; --muted: #858d9b; --grid: #262b34; --axis: #343a45;
       --accent: #e8d39c; --accent-bg: #413620;
       --s0: #3987e5; --s1: #d95926; --s2: #199e70; --s3: #c98500;
-      --good: #0ca30c; --good-text: #3ccf3c; --warning: #fab219; --critical: #e66767; --bad-text: #ff8a8a;
+      --good: #0ca30c; --good-text: #3ccf3c; --warning: #fab219; --warn-text: #fab219; --critical: #e66767; --bad-text: #ff8a8a;
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -68,6 +68,13 @@ public enum DashboardPage {
     .bar > div { height: 100%; border-radius: 2px; }
     .monsters { margin-top: 10px; font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
     .note { margin-top: 8px; font-size: 12px; color: var(--ink-2); background: var(--surface-2); border-radius: 6px; padding: 6px 8px; }
+    .missions { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--grid); display: grid; gap: 10px; }
+    .mhead { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    .mission { display: grid; gap: 3px; min-width: 0; }
+    .mtop { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 600; }
+    .mcount { font-variant-numeric: tabular-nums; color: var(--ink-2); font-weight: 500; white-space: nowrap; }
+    .mtitle { font-size: 13px; overflow-wrap: anywhere; }
+    .madvice { font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
     .empty { color: var(--muted); font-size: 13px; padding: 14px 0 4px; }
 
     .section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
@@ -144,6 +151,16 @@ public enum DashboardPage {
       hunting: ['Caçando', 'var(--good)'], city: ['Na cidade', 'var(--axis)'], offline: ['Desconectada', 'transparent'],
       replaced: ['Sessão em outro lugar', 'var(--warning)'],
     };
+    const MISSION = {
+      claimed:   ['✓', 'Resgatada', 'var(--good-text)'],
+      ready:     ['●', 'Concluída — resgate no jogo', 'var(--accent)'],
+      on_track:  ['▶', 'Contando nesta hunt', 'var(--good-text)'],
+      off_track: ['⚠', 'A hunt atual não conta', 'var(--warn-text)'],
+      pending:   ['○', 'Pendente', 'var(--ink-2)'],
+      unknown:   ['?', 'Hunt atual fora do catálogo', 'var(--ink-2)'],
+      elite:     ['★', 'Elite', 'var(--ink-2)'],
+      forge:     ['⚒', 'Forja (na cidade)', 'var(--ink-2)'],
+    };
     const VOC = { knight: 'Knight', paladin: 'Paladin', sorcerer: 'Sorcerer', druid: 'Druid', monk: 'Monk' };
     let rangeHours = 12, lastAccounts = [], lastHistory = null;
 
@@ -177,6 +194,40 @@ public enum DashboardPage {
     const topKills = (kills, n = 3) => Object.entries(kills || {}).sort((a, b) => b[1] - a[1]).slice(0, n);
     const vocation = (v) => VOC[String(v || '').toLowerCase()] || v || '';
 
+    const until = (ms) => {
+      const m = Math.max(0, Math.floor((num(ms) - Date.now()) / 60000)), h = Math.floor(m / 60);
+      return h ? `${h}h ${String(m % 60).padStart(2, '0')}min` : `${m}min`;
+    };
+
+    function missions(a) {
+      const d = a.daily;
+      if (!d || !d.missions || !d.missions.length) return null;
+      const box = el('div', { class: 'missions' },
+        el('div', { class: 'mhead' }, 'Missões diárias' + (d.dailyResetAt ? ` · reseta em ${until(d.dailyResetAt)}` : '')));
+      for (const m of d.missions) {
+        const [icon, label, color] = MISSION[m.state] || MISSION.pending;
+        const pct = m.quantity ? Math.min(100, 100 * m.progress / m.quantity) : 0;
+        const done = m.state === 'claimed' || m.state === 'ready';
+        const row = el('div', { class: 'mission' },
+          el('div', { class: 'mtop' }, el('span', { style: { color } }, `${icon} ${label}`), el('span', { class: 'mcount' }, `${fmt(m.progress)}/${fmt(m.quantity)}`)),
+          el('div', { class: 'mtitle' }, m.title || (m.targets || []).join(', ')),
+          el('div', { class: 'bar' }, el('div', { style: { width: `${pct}%`, background: done ? 'var(--good)' : 'var(--s0)' } })));
+        if (m.kind === 'monster' && !done) {
+          const maps = (m.candidates || []).map((c) => c.title + (c.full ? '' : ' (parcial)'));
+          if (m.state === 'on_track') row.append(el('div', { class: 'madvice' }, `Hunt atual: ${d.currentHunt ? d.currentHunt.title : '—'}`));
+          else {
+            const now = d.currentHunt && a.status === 'hunting' ? `Hunt atual: ${d.currentHunt.title}. ` : '';
+            row.append(el('div', { class: 'madvice' }, maps.length ? `${now}Hunt sugerida: ${maps.join(' · ')}` : `${now}Sem hunt conhecida para: ${(m.targets || []).join(', ')}`));
+          }
+        } else if (m.kind === 'elite' && !done) {
+          row.append(el('div', { class: 'madvice' }, `Elite alvo: ${(m.targets || [])[0] || '—'}`));
+        }
+        box.append(row);
+      }
+      if (d.weekly && d.weekly.needed) box.append(el('div', { class: 'madvice' }, `Semanais: ${d.weekly.done}/${d.weekly.needed} concluídas`));
+      return box;
+    }
+
     async function getJSON(path) {
       const r = await fetch(path, { cache: 'no-store' });
       if (!r.ok) throw new Error(r.status);
@@ -196,7 +247,8 @@ public enum DashboardPage {
       const state = a.state || {}, character = state.character || {}, account = a.account || {};
       const who = character.name || account.name;
       const level = character.level || account.level;
-      const sub = el('div', { class: 'sub' }, who ? `${who}${level ? ` · level ${level}` : ''}${a.training ? ' · treino' : ''}` : '');
+      const huntNow = a.status === 'hunting' && a.daily && a.daily.currentHunt ? ` · ${a.daily.currentHunt.title}` : '';
+      const sub = el('div', { class: 'sub' }, who ? `${who}${level ? ` · level ${level}` : ''}${a.training ? ' · treino' : ''}${huntNow}` : '');
       const node = el('div', { class: 'card' }, top, sub);
       const an = a.analyzer;
       if (a.status === 'hunting' && an) {
@@ -218,6 +270,8 @@ public enum DashboardPage {
       } else {
         node.append(el('div', { class: 'empty' }, a.status === 'offline' ? 'Abra o jogo nesta aba do gerenciador.' : 'Sem hunt em andamento.'));
       }
+      const daily = missions(a);
+      if (daily) node.append(daily);
       const party = state.party || (a.status !== 'hunting' ? a.roster : null);
       if (party && party.length) {
         node.append(el('div', { class: 'party' }, party.map((m) => el('div', { class: 'member' },
@@ -369,11 +423,12 @@ public enum DashboardPage {
         const { hunts } = await getJSON('/api/hunts?limit=100');
         if (!hunts.length) { $('hunts').replaceChildren(el('div', { class: 'empty' }, 'Nenhuma hunt encerrada registrada ainda.')); return; }
         $('hunts').replaceChildren(el('table', null,
-          el('thead', null, el('tr', null, ['Fim', 'Conta', 'Personagens', 'Duração', 'Motivo'].map((h) => el('th', null, h)),
+          el('thead', null, el('tr', null, ['Fim', 'Conta', 'Hunt', 'Personagens', 'Duração', 'Motivo'].map((h) => el('th', null, h)),
             ['Level', 'XP', 'XP/h', 'Loot', 'Supplies', 'Balance', 'Mortes'].map((h) => el('th', { class: 'n' }, h)))),
           el('tbody', null, hunts.map((h) => el('tr', null,
             el('td', null, dateTime(h.endedAt)),
             el('td', null, el('span', { class: 'swatch', style: { background: SERIES[h.account] } }), h.label),
+            el('td', null, h.huntTitle || (h.huntId ? `#${h.huntId}` : '—')),
             el('td', null, (h.characters || []).join(', ') || '—'),
             el('td', null, duration(num(h.elapsedSec) * 1000)),
             el('td', null, REASONS[h.reason] || h.reason || '—'),

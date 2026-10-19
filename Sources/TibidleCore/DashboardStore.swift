@@ -15,6 +15,7 @@ public final class DashboardStore {
     private var live: [[String: Any]]
     private var lastSample: [Int: Date] = [:]
     private var names: [String]
+    private var catalog = HuntCatalog.empty
 
     public init(databaseURL: URL?, now: @escaping () -> Date = Date.init) {
         self.now = now
@@ -31,13 +32,31 @@ public final class DashboardStore {
             CREATE TABLE IF NOT EXISTS samples (account INTEGER, ts REAL, hunt_id INTEGER, elapsed_ms INTEGER,
                 xp TEXT, xp_per_hour INTEGER, loot_gold INTEGER, supplies_gold INTEGER, kills_total INTEGER);
             CREATE INDEX IF NOT EXISTS samples_ts ON samples(ts);
-            CREATE TABLE IF NOT EXISTS hunts (account INTEGER, hunt_id INTEGER, ended_at REAL, summary TEXT,
-                UNIQUE(account, hunt_id));
+            -- hunt_id is the *map* id, so a run is identified by its own numbers, not by the map.
+            CREATE TABLE IF NOT EXISTS runs (account INTEGER, ended_at REAL, signature TEXT, summary TEXT,
+                UNIQUE(account, signature));
             """)
+        migrateLegacyHunts()
         run("DELETE FROM samples WHERE ts < ?", [.double(self.now().timeIntervalSince1970 - Self.retention)])
     }
 
     deinit { sqlite3_close(db) }
+
+    /// Earlier versions keyed hunts by (account, map), so repeating a map replaced the previous run.
+    private func migrateLegacyHunts() {
+        var legacy = false
+        query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='hunts'", []) { _ in legacy = true }
+        guard legacy else { return }
+        exec("""
+            INSERT OR IGNORE INTO runs (account, ended_at, signature, summary)
+                SELECT account, ended_at, 'legacy-' || hunt_id, summary FROM hunts;
+            DROP TABLE hunts;
+            """)
+    }
+
+    public func setHuntCatalog(_ catalog: HuntCatalog) {
+        queue.sync { self.catalog = catalog }
+    }
 
     public func setAccountNames(_ names: [String]) {
         queue.sync { self.names = names }
@@ -63,6 +82,9 @@ public final class DashboardStore {
             entry["roster"] = data["roster"]
             entry["analyzer"] = nil
             entry["huntId"] = nil
+            setMissions(&entry, data["eventos"])
+        case "eventos_state", "eventos_result":
+            setMissions(&entry, data["eventos"])
         case "hunt_started":
             entry["status"] = "hunting"
             entry["huntId"] = data["huntId"]
@@ -77,6 +99,13 @@ public final class DashboardStore {
             if let state = data["state"] { entry["state"] = state }
             if let training = data["training"] { entry["training"] = training }
             if let offline = data["offline"] { entry["offline"] = offline }
+            if let progress = (data["eventosProgresso"] as? [String: Any])?["dia"] as? [String: Any] {
+                var slots: [String: Double] = [:]
+                for case let slot as [String: Any] in (progress["slots"] as? [Any]) ?? [] {
+                    if let id = slot["taskId"] as? String, let shown = number(slot["exibido"]) { slots[id] = shown }
+                }
+                entry["missionsLive"] = ["serverDay": progress["serverDay"] as? String ?? "", "slots": slots] as [String: Any]
+            }
             if let analyzer = data["analyzer"] as? [String: Any] {
                 entry["analyzer"] = analyzer
                 if type == "resume" || entry["huntStartedAt"] == nil, let elapsed = number(analyzer["elapsedMs"]) {
@@ -91,9 +120,11 @@ public final class DashboardStore {
             summary["characters"] = characterNames(entry)
             entry["lastSummary"] = summary
             entry["analyzer"] = nil
-            if let huntId = number(summary["huntId"]), let text = jsonString(summary) {
-                run("INSERT OR REPLACE INTO hunts (account, hunt_id, ended_at, summary) VALUES (?, ?, ?, ?)",
-                    [.int(account), .int(Int(huntId)), .double(date.timeIntervalSince1970), .text(text)])
+            if let text = jsonString(summary) {
+                let signature = ["huntId", "elapsedSec", "xp", "lootGold", "suppliesGold", "killsTotal", "balance"]
+                    .map { "\(summary[$0] ?? "")" }.joined(separator: "|")
+                run("INSERT OR IGNORE INTO runs (account, ended_at, signature, summary) VALUES (?, ?, ?, ?)",
+                    [.int(account), .double(date.timeIntervalSince1970), .text(signature), .text(text)])
             }
         case "session_takeover", "session_replaced":
             entry["status"] = "replaced"
@@ -104,6 +135,12 @@ public final class DashboardStore {
         }
         entry["updatedAt"] = date.timeIntervalSince1970 * 1000
         live[account] = entry
+    }
+
+    private func setMissions(_ entry: inout [String: Any], _ eventos: Any?) {
+        guard let eventos = eventos as? [String: Any], eventos["diarias"] != nil else { return }
+        entry["missions"] = eventos
+        entry["missionsLive"] = nil
     }
 
     private func sample(account: Int, huntId: Any?, analyzer: [String: Any], at date: Date) {
@@ -133,6 +170,16 @@ public final class DashboardStore {
                 var out = entry
                 out["index"] = index
                 out["label"] = names[index]
+                if let eventos = entry["missions"] as? [String: Any] {
+                    out["daily"] = MissionAdvisor.evaluate(
+                        eventos: eventos, live: entry["missionsLive"] as? [String: Any],
+                        hunting: entry["status"] as? String == "hunting", training: entry["training"] as? Bool == true,
+                        currentHuntId: number(entry["huntId"]).map { Int($0) }, catalog: catalog)
+                } else if let id = number(entry["huntId"]), let hunt = catalog.hunt(id: Int(id)) {
+                    out["daily"] = ["missions": [], "currentHunt": ["id": hunt.id, "title": hunt.title]] as [String: Any]
+                }
+                out["missions"] = nil
+                out["missionsLive"] = nil
                 return out
             }
             return json(["generatedAt": now().timeIntervalSince1970 * 1000, "accounts": accounts])
@@ -160,12 +207,13 @@ public final class DashboardStore {
     public func huntsJSON(limit: Int) -> Data {
         queue.sync {
             var hunts: [[String: Any]] = []
-            query("SELECT account, summary FROM hunts ORDER BY ended_at DESC LIMIT ?", [.int(limit)]) { row in
+            query("SELECT account, summary FROM runs ORDER BY ended_at DESC LIMIT ?", [.int(limit)]) { row in
                 guard let text = sqlite3_column_text(row, 1),
                       var summary = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)) as? [String: Any]
                 else { return }
                 let account = Int(sqlite3_column_int(row, 0))
                 summary["account"] = account
+                summary["huntTitle"] = number(summary["huntId"]).flatMap { catalog.hunt(id: Int($0))?.title }
                 summary["label"] = names.indices.contains(account) ? names[account] : "Conta \(account + 1)"
                 hunts.append(summary)
             }

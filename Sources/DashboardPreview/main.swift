@@ -16,11 +16,32 @@ let parties = [
     #"[{"name":"Mossy","vocation":"druid","level":122,"hp":700,"maxHp":800,"mana":2000,"maxMana":3300}]"#,
     #"[{"name":"Arrowtip","vocation":"paladin","level":143,"hp":1200,"maxHp":1500,"mana":1300,"maxMana":2100}]"#,
 ]
-for account in 0..<3 {
-    store.ingest(account: account, json: #"{"type":"welcome","data":{"account":{"name":"acc\#(account)","level":100}}}"#)
-    store.ingest(account: account, json: #"{"type":"hunt_started","data":{"huntId":\#(account + 1),"state":{"party":\#(parties[account])}}}"#)
+store.setHuntCatalog(HuntCatalog(json: Data("""
+{"hunts":[
+ {"id":10,"title":"Dragon Lair","island":"Edron","monsters":["Dragon","Dragon Hatchling"]},
+ {"id":11,"title":"Dragon Lord Cave","island":"Edron","monsters":["Dragon","Dragon Lord"]},
+ {"id":12,"title":"Rotworm Burrow","island":"Thais","monsters":["Rotworm","Carrion Worm"]},
+ {"id":13,"title":"Minotaur Hills","island":"Ab'Dendriel","monsters":["Minotaur","Minotaur Archer"]}]}
+""".utf8))!)
+func missionJSON(_ a: Int) -> String {
+    let slot0 = [
+        #"{"id":"d1","title":"Caçada: Dragon Lair","kind":"monster","quantity":300,"progresso":212,"resgatado":false,"targets":["Dragon"],"rewards":[]}"#,
+        #"{"id":"d1","title":"Caçada: Minotaur Hills","kind":"monster","quantity":150,"progresso":40,"resgatado":false,"targets":["Minotaur"],"rewards":[]}"#,
+        #"{"id":"d1","title":"Caçada: Rotworm Burrow","kind":"monster","quantity":200,"progresso":200,"resgatado":false,"targets":["Rotworm"],"rewards":[]}"#,
+    ][a]
+    let slot1 = [
+        #"{"id":"d2","title":"Refinar itens","kind":"refinar","quantity":3,"progresso":1,"resgatado":false,"targets":[],"rewards":[]}"#,
+        #"{"id":"d2","title":"Elite","kind":"elite","quantity":1,"progresso":0,"resgatado":false,"targets":["Orshabaal"],"rewards":[]}"#,
+        #"{"id":"d2","title":"Caçada: Dragon Lord Cave","kind":"monster","quantity":80,"progresso":80,"resgatado":true,"targets":["Dragon Lord"],"rewards":[]}"#,
+    ][a]
+    return #"{"serverDay":"2026-10-18","nextDailyResetAt":\#(Int(Date().timeIntervalSince1970 * 1000) + 5 * 3_600_000 + 1_200_000),"diarias":{"slots":[\#(slot0),\#(slot1)]},"semanais":{"concluidas":2,"necessarias":5}}"#
 }
-var hunt = [1, 2, 3]
+let maps = [10, 10, 13]   // account 1 hunts Dragon Lair but its mission asks for Minotaurs
+for account in 0..<3 {
+    store.ingest(account: account, json: #"{"type":"welcome","data":{"account":{"name":"acc\#(account)","level":100},"eventos":\#(missionJSON(account))}}"#)
+    store.ingest(account: account, json: #"{"type":"hunt_started","data":{"huntId":\#(maps[account]),"state":{"party":\#(parties[account])}}}"#)
+}
+var hunt = maps
 for minute in 0..<360 {
     clock = clock.addingTimeInterval(60)
     for account in 0..<3 where !(account == 2 && (150..<200).contains(minute)) {
@@ -31,7 +52,6 @@ for minute in 0..<360 {
         let supplies = Int(elapsed / 3_600_000 * [390_000.0, 60_000, 330_000][account])
         if minute % 120 == 0 && minute > 0 {
             store.ingest(account: account, json: #"{"type":"ended","data":{"summary":{"huntId":\#(hunt[account]),"reason":"\#(["stop", "cap_full", "death"][account])","elapsedSec":7200,"level":{"start":\#(140 + account),"end":\#(141 + account)},"xp":"\#(xph * 2)","xpPerHour":\#(xph),"lootGold":\#(loot),"suppliesGold":\#(supplies),"balance":\#(loot - supplies),"killsTotal":1800,"deaths":\#(account == 2 ? 1 : 0)}}}"#)
-            hunt[account] += 10
             store.ingest(account: account, json: #"{"type":"hunt_started","data":{"huntId":\#(hunt[account]),"state":{"party":\#(parties[account])}}}"#)
         }
         store.ingest(account: account, json: #"{"type":"frame","data":{"state":{"party":\#(parties[account])},"analyzer":{"elapsedMs":\#(Int(elapsed)),"xp":"\#(Int(Double(xph) * elapsed / 3_600_000))","xpPerHour":\#(xph),"killsTotal":\#(minute % 120 * 14),"kills":{"Dragon":\#(minute % 120 * 9),"Dragon Lord":\#(minute % 120 * 2),"Dragon Hatchling":\#(minute % 120 * 3)},"lootGold":\#(loot),"suppliesGold":\#(supplies),"damageDealt":\#(Int(elapsed / 20)),"damageTaken":\#(Int(elapsed / 90)),"healingDone":\#(Int(elapsed / 110))}}}"#)

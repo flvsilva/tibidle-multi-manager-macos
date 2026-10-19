@@ -1,0 +1,214 @@
+import JavaScriptCore
+import SQLite3
+import XCTest
+@testable import TibidleCore
+
+private let catalogJSON = """
+{"spriteVer":1,"hunts":[
+ {"id":10,"title":"Dragon Lair","island":"a","monsters":["Dragon","Dragon Hatchling"]},
+ {"id":11,"title":"Dragon Lord Cave","island":"a","monsters":["Dragon","Dragon Lord"]},
+ {"id":12,"title":"Rat Hole","island":"b","monsters":["Rat","Cave Rat"]},
+ {"id":13,"title":"Mixed Ruins","island":"b","monsters":["Rat","Dragon Hatchling"]}]}
+"""
+
+private func eventos(progress: Int = 0, claimed: Bool = false, kind: String = "monster", targets: [String] = ["Dragon"],
+                     title: String = "Caçada: Dragon Lair") -> [String: Any] {
+    ["serverDay": "2026-10-18", "nextDailyResetAt": 1_900_000_000_000,
+     "diarias": ["slots": [
+        ["id": "t1", "title": title, "kind": kind, "quantity": 100, "progresso": progress, "resgatado": claimed,
+         "targets": targets, "rewards": [["kind": "coins", "amount": 5]]],
+        NSNull(),
+     ]],
+     "semanais": ["concluidas": 2, "necessarias": 5]]
+}
+
+final class HuntCatalogTests: XCTestCase {
+    private let catalog = HuntCatalog(json: Data(catalogJSON.utf8))!
+
+    func testParsesAndRejectsGarbage() {
+        XCTAssertEqual(catalog.hunts.count, 4)
+        XCTAssertEqual(catalog.hunt(id: 12)?.title, "Rat Hole")
+        XCTAssertNil(HuntCatalog(json: Data("{}".utf8)))
+        XCTAssertNil(HuntCatalog(json: Data("<html>".utf8)))
+    }
+
+    func testCandidatesPreferFullMatchesAndTitleHint() {
+        let hint = catalog.candidates(targets: ["dragon"], missionTitle: "Caçada: Dragon Lord Cave")
+        XCTAssertEqual(hint.map(\.hunt.id), [11, 10])
+        XCTAssertTrue(hint.allSatisfy(\.full))
+        let both = catalog.candidates(targets: ["Dragon", "Dragon Lord"], missionTitle: "x")
+        XCTAssertEqual(both.map(\.hunt.id), [11])
+        let partial = catalog.candidates(targets: ["Rat", "Dragon Hatchling"], missionTitle: "x")
+        XCTAssertEqual(partial.map(\.hunt.id), [13])
+        let none = catalog.candidates(targets: ["Rat", "Orc"], missionTitle: "x")
+        XCTAssertEqual(none.map(\.hunt.id), [12, 13])
+        XCTAssertFalse(none[0].full)
+        XCTAssertTrue(catalog.candidates(targets: ["Unicorn"], missionTitle: "x").isEmpty)
+    }
+}
+
+final class MissionAdvisorTests: XCTestCase {
+    private let catalog = HuntCatalog(json: Data(catalogJSON.utf8))!
+
+    private func state(_ e: [String: Any], hunting: Bool = true, huntId: Int? = 10, live: [String: Any]? = nil,
+                       training: Bool = false) -> [String: Any] {
+        let result = MissionAdvisor.evaluate(eventos: e, live: live, hunting: hunting, training: training,
+                                             currentHuntId: huntId, catalog: catalog)
+        return (result["missions"] as! [[String: Any]])[0]
+    }
+
+    func testStates() {
+        XCTAssertEqual(state(eventos())["state"] as? String, "on_track")
+        XCTAssertEqual(state(eventos(), huntId: 12)["state"] as? String, "off_track")
+        XCTAssertEqual(state(eventos(), huntId: 1)["state"] as? String, "unknown")      // tower / not in catalog
+        XCTAssertEqual(state(eventos(), hunting: false)["state"] as? String, "pending")
+        XCTAssertEqual(state(eventos(), training: true)["state"] as? String, "pending")
+        XCTAssertEqual(state(eventos(progress: 100))["state"] as? String, "ready")
+        XCTAssertEqual(state(eventos(progress: 100, claimed: true))["state"] as? String, "claimed")
+        XCTAssertEqual(state(eventos(kind: "refinar"))["state"] as? String, "forge")
+        XCTAssertEqual(state(eventos(kind: "elite", targets: ["Ferumbras"]))["state"] as? String, "elite")
+    }
+
+    func testLiveProgressOnlyCountsForTheSameDay() {
+        let live: [String: Any] = ["serverDay": "2026-10-18", "slots": ["t1": 64.0]]
+        XCTAssertEqual(state(eventos(progress: 10), live: live)["progress"] as? Int, 64)
+        XCTAssertEqual(state(eventos(progress: 70), live: live)["progress"] as? Int, 70)
+        let stale: [String: Any] = ["serverDay": "2026-10-17", "slots": ["t1": 90.0]]
+        XCTAssertEqual(state(eventos(progress: 10), live: stale)["progress"] as? Int, 10)
+    }
+
+    func testExtras() {
+        let result = MissionAdvisor.evaluate(eventos: eventos(), live: nil, hunting: true, training: false,
+                                             currentHuntId: 10, catalog: catalog)
+        XCTAssertEqual((result["currentHunt"] as? [String: Any])?["title"] as? String, "Dragon Lair")
+        XCTAssertEqual(result["dailyResetAt"] as? Double, 1_900_000_000_000)
+        XCTAssertEqual((result["weekly"] as? [String: Int])?["done"], 2)
+        var seconds = eventos(); seconds["nextDailyResetAt"] = 1_900_000_000
+        XCTAssertEqual(MissionAdvisor.evaluate(eventos: seconds, live: nil, hunting: false, training: false,
+                                               currentHuntId: nil, catalog: catalog)["dailyResetAt"] as? Double, 1_900_000_000_000)
+    }
+}
+
+final class MissionStoreTests: XCTestCase {
+    private var clock = Date(timeIntervalSince1970: 1_800_000_000)
+    private func makeStore() -> DashboardStore {
+        let store = DashboardStore(databaseURL: nil, now: { [unowned self] in clock })
+        store.setHuntCatalog(HuntCatalog(json: Data(catalogJSON.utf8))!)
+        return store
+    }
+    private func account(_ store: DashboardStore, _ i: Int) -> [String: Any] {
+        let root = try! JSONSerialization.jsonObject(with: store.stateJSON()) as! [String: Any]
+        return (root["accounts"] as! [[String: Any]])[i]
+    }
+    private func hunts(_ store: DashboardStore) -> [[String: Any]] {
+        (try! JSONSerialization.jsonObject(with: store.huntsJSON(limit: 50)) as! [String: Any])["hunts"] as! [[String: Any]]
+    }
+
+    func testMissionFlowFromGameMessages() {
+        let store = makeStore()
+        let slots = #"{"id":"t1","title":"Caçada: Dragon Lair","kind":"monster","quantity":100,"progresso":10,"resgatado":false,"targets":["Dragon"],"rewards":[]}"#
+        store.ingest(account: 0, json: #"{"type":"welcome","data":{"eventos":{"serverDay":"2026-10-18","nextDailyResetAt":1900000000000,"diarias":{"slots":[\#(slots),null]}}}}"#)
+        var daily = account(store, 0)["daily"] as! [String: Any]
+        XCTAssertEqual((daily["missions"] as! [[String: Any]])[0]["state"] as? String, "pending")
+
+        store.ingest(account: 0, json: #"{"type":"hunt_started","data":{"huntId":12,"state":{}}}"#)
+        daily = account(store, 0)["daily"] as! [String: Any]
+        XCTAssertEqual((daily["missions"] as! [[String: Any]])[0]["state"] as? String, "off_track")
+        XCTAssertEqual(((daily["missions"] as! [[String: Any]])[0]["candidates"] as! [[String: Any]])[0]["title"] as? String, "Dragon Lair")
+
+        store.ingest(account: 0, json: #"{"type":"hunt_started","data":{"huntId":10,"state":{}}}"#)
+        store.ingest(account: 0, json: #"{"type":"frame","data":{"analyzer":{"elapsedMs":1},"eventosProgresso":{"dia":{"serverDay":"2026-10-18","slots":[{"taskId":"t1","exibido":55}]}}}}"#)
+        let mission = ((account(store, 0)["daily"] as! [String: Any])["missions"] as! [[String: Any]])[0]
+        XCTAssertEqual(mission["state"] as? String, "on_track")
+        XCTAssertEqual(mission["progress"] as? Int, 55)
+
+        // An authoritative update replaces the live estimate.
+        store.ingest(account: 0, json: #"{"type":"eventos_state","data":{"eventos":{"serverDay":"2026-10-18","diarias":{"slots":[{"id":"t1","title":"x","kind":"monster","quantity":100,"progresso":100,"resgatado":false,"targets":["Dragon"]},null]}}}}"#)
+        XCTAssertEqual((((account(store, 0)["daily"] as! [String: Any])["missions"]) as! [[String: Any]])[0]["state"] as? String, "ready")
+        XCTAssertNil(account(store, 0)["missions"], "raw missions must not leak into the API")
+    }
+
+    func testRepeatingTheSameMapKeepsEveryRun() {
+        let store = makeStore()
+        for run in 1...3 {
+            clock += 3600
+            store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":10,"reason":"stop","elapsedSec":3600,"xp":"\#(run * 100)","lootGold":5,"suppliesGold":1,"killsTotal":\#(run),"balance":4}}}"#)
+        }
+        store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":10,"reason":"stop","elapsedSec":3600,"xp":"300","lootGold":5,"suppliesGold":1,"killsTotal":3,"balance":4}}}"#) // duplicate delivery
+        let all = hunts(store)
+        XCTAssertEqual(all.count, 3)
+        XCTAssertEqual(all.first?["huntTitle"] as? String, "Dragon Lair")
+    }
+
+    func testMigratesTheOldHuntsTable() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("d.sqlite")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &db), SQLITE_OK)
+        sqlite3_exec(db, """
+            CREATE TABLE hunts (account INTEGER, hunt_id INTEGER, ended_at REAL, summary TEXT, UNIQUE(account, hunt_id));
+            INSERT INTO hunts VALUES (1, 45, 1799990000, '{"huntId":45,"reason":"stop","balance":7}');
+            INSERT INTO hunts VALUES (2, 176, 1799990100, '{"huntId":176,"reason":"death","balance":-3}');
+            """, nil, nil, nil)
+        sqlite3_close(db)
+
+        let store = DashboardStore(databaseURL: url, now: { [unowned self] in clock })
+        XCTAssertEqual(hunts(store).count, 2)
+        let reopened = DashboardStore(databaseURL: url, now: { [unowned self] in clock })
+        XCTAssertEqual(hunts(reopened).count, 2, "migration must be idempotent")
+        var check: OpaquePointer?
+        sqlite3_open(url.path, &check)
+        var statement: OpaquePointer?
+        sqlite3_prepare_v2(check, "SELECT count(*) FROM sqlite_master WHERE name='hunts'", -1, &statement, nil)
+        sqlite3_step(statement)
+        XCTAssertEqual(sqlite3_column_int(statement, 0), 0)
+        sqlite3_finalize(statement); sqlite3_close(check)
+    }
+}
+
+final class MissionCollectorTests: XCTestCase {
+    func testOnlyDailyMissionFieldsPass() {
+        let context = JSContext()!
+        context.exceptionHandler = { _, e in XCTFail("JS error: \(e?.toString() ?? "")") }
+        context.evaluateScript("""
+            var window = globalThis, posts = [];
+            var location = { hostname: 'play.tibidle.com', href: 'https://play.tibidle.com/' };
+            var webkit = { messageHandlers: { \(CollectorScript.handlerName): { postMessage: (m) => posts.push(m) } } };
+            class URL { constructor(u) { this.hostname = /^wss?:\\/\\/([^\\/:]+)/.exec(u)[1]; } }
+            class FakeSocket { constructor(u) { this.l = {}; }
+              addEventListener(t, f) { (this.l[t] = this.l[t] || []).push(f); }
+              receive(d) { (this.l.message || []).forEach((f) => f({ data: d })); } }
+            window.WebSocket = FakeSocket;
+            """)
+        context.evaluateScript(CollectorScript.source)
+        context.evaluateScript("""
+            var ws = new WebSocket('wss://play.tibidle.com/ws');
+            var task = { id: 't1', title: 'Caçada: Dragon', kind: 'monster', quantity: 50, targets: ['Dragon'], progresso: 3,
+              resgatado: false, rewards: [{ kind: 'item', itemId: 99, name: 'Gem', amount: 2 }, { kind: 'coins', amount: 5 }] };
+            var ev = { serverDay: '2026-10-18', serverWeek: 'W', nextDailyResetAt: 1, nextWeeklyResetAt: 2,
+              login: { janela: { dias: [1, 2] }, custoPerdido: 7 }, sequencia: { dias: [] },
+              diarias: { slots: [task, null], custoReroll: 99 }, semanais: { tarefas: [{ id: 'monstros' }], concluidas: 1, necessarias: 5 },
+              resgataveis: { total: 3 } };
+            ws.receive(JSON.stringify({ type: 'welcome', data: { worldToken: 'SECRET', eventos: ev } }));
+            ws.receive(JSON.stringify({ type: 'eventos_result', data: { requestId: 'r1', state: ev } }));
+            ws.receive(JSON.stringify({ type: 'frame', data: { analyzer: {}, state: {}, events: [],
+              eventosProgresso: { dia: { serverDay: '2026-10-18', slots: [{ taskId: 't1', exibido: 9, extra: 1 }] }, semana: { monstros: 4 } } } }));
+            """)
+        let raw = context.evaluateScript("posts")!.toArray() as! [String]
+        let messages = raw.map { try! JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        XCTAssertEqual(messages.map { $0["type"] as? String }, ["welcome", "eventos_result", "frame"])
+        let joined = raw.joined()
+        for forbidden in ["SECRET", "custoReroll", "custoPerdido", "login", "sequencia", "resgataveis", "itemId", "nextWeeklyResetAt", "serverWeek", "extra", "requestId"] {
+            XCTAssertFalse(joined.contains(forbidden), "\(forbidden) leaked")
+        }
+        let welcome = (messages[0]["data"] as! [String: Any])["eventos"] as! [String: Any]
+        let slot = ((welcome["diarias"] as! [String: Any])["slots"] as! [Any])[0] as! [String: Any]
+        XCTAssertEqual(slot["targets"] as? [String], ["Dragon"])
+        XCTAssertEqual(slot["progresso"] as? Int, 3)
+        XCTAssertEqual(((welcome["semanais"] as! [String: Any])["concluidas"]) as? Int, 1)
+        let frame = messages[2]["data"] as! [String: Any]
+        let live = ((frame["eventosProgresso"] as! [String: Any])["dia"] as! [String: Any])["slots"] as! [[String: Any]]
+        XCTAssertEqual(live[0]["exibido"] as? Int, 9)
+    }
+}

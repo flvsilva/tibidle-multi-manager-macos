@@ -23,3 +23,8 @@ WebsiteDataStore/
 *.key
 *.p12
 CLAUDE.md
+
+# Editor temporaries.
+*.swp
+*.swo
+*~

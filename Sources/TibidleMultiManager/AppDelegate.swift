@@ -4,11 +4,15 @@ import TibidleCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: MainWindowController?
     private var server: DashboardServer?
+    private var catalogLoader: HuntCatalogLoader?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = buildMenu()
         let root = SettingsStore.defaultRoot
         let dashboard = DashboardStore(databaseURL: root.appendingPathComponent("dashboard.sqlite"))
+        let loader = HuntCatalogLoader(cacheURL: root.appendingPathComponent("hunts-catalog.json"), store: dashboard)
+        loader.start()
+        catalogLoader = loader
         let controller = MainWindowController(store: SettingsStore(root: root), dashboard: dashboard)
         self.controller = controller
         let server = DashboardServer(store: dashboard)
@@ -37,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         controller?.save()
         server?.stop()
+        catalogLoader?.stop()
     }
 
     @objc private func selectPosition(_ sender: NSMenuItem) { controller?.selectPosition(sender.tag) }

@@ -26,6 +26,8 @@ public enum CollectorScript {
                        'balance', 'kills', 'killsTotal', 'damageDealt', 'damageTaken', 'healingDone', 'drops',
                        'deaths', 'deathCause'];
       const OFFLINE = ['elapsedMs', 'xp', 'killsTotal', 'lootGold'];
+      const TASK = ['id', 'title', 'kind', 'quantity', 'progresso', 'resgatado'];
+      const REWARD = ['kind', 'name', 'amount', 'percent'];
 
       const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
       const pick = (o, keys) => {
@@ -43,16 +45,37 @@ public enum CollectorScript {
         tower: pick(s.tower, ['floor', 'cleared', 'mode']),
       } : undefined;
 
+      const strings = (list) => Array.isArray(list) ? list.filter((v) => typeof v === 'string').slice(0, 8) : [];
+      const task = (t) => isObject(t) ? Object.assign(pick(t, TASK), {
+        targets: strings(t.targets),
+        rewards: Array.isArray(t.rewards) ? t.rewards.slice(0, 6).map((r) => pick(r, REWARD)) : [],
+      }) : null;
+      // Daily missions only; login calendar, streak, weekly task list and prizes' ids are dropped.
+      const eventos = (e) => isObject(e) ? {
+        serverDay: e.serverDay,
+        nextDailyResetAt: e.nextDailyResetAt,
+        diarias: isObject(e.diarias) && Array.isArray(e.diarias.slots) ? { slots: e.diarias.slots.slice(0, 2).map(task) } : undefined,
+        semanais: pick(e.semanais, ['concluidas', 'necessarias']),
+      } : undefined;
+      const progress = (p) => isObject(p) ? {
+        dia: isObject(p.dia) ? {
+          serverDay: p.dia.serverDay,
+          slots: Array.isArray(p.dia.slots) ? p.dia.slots.slice(0, 2).map((x) => pick(x, ['taskId', 'exibido'])) : [],
+        } : undefined,
+      } : undefined;
+
       const post = (type, data) => {
         try { window.webkit.messageHandlers[HANDLER].postMessage(JSON.stringify({ type, data: data || {} })); } catch (_) {}
       };
 
       const project = {
-        welcome: (d) => ({ account: pick(d.account, ACCOUNT), roster: pickList(d.roster, CHARACTER) }),
+        welcome: (d) => ({ account: pick(d.account, ACCOUNT), roster: pickList(d.roster, CHARACTER), eventos: eventos(d.eventos) }),
+        eventos_state: (d) => ({ eventos: eventos(d) }),
+        eventos_result: (d) => ({ eventos: eventos(d.state) }),
         resume: (d) => ({ huntId: d.huntId, state: state(d.state), analyzer: pick(d.analyzer, ANALYZER),
                           offline: pick(d.offline, OFFLINE), training: d.training === true }),
         hunt_started: (d) => ({ huntId: d.huntId, state: state(d.state), training: d.training === true }),
-        frame: (d) => ({ state: state(d.state), analyzer: pick(d.analyzer, ANALYZER) }),
+        frame: (d) => ({ state: state(d.state), analyzer: pick(d.analyzer, ANALYZER), eventosProgresso: progress(d.eventosProgresso) }),
         ended: (d) => ({ summary: pick(d.summary, SUMMARY) }),
         session_takeover: () => ({}),
         session_replaced: () => ({}),
