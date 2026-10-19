@@ -5,6 +5,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: MainWindowController?
     private var server: DashboardServer?
     private var catalogLoader: HuntCatalogLoader?
+    private var notifier: Notifier?
+    private var notifyItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = buildMenu()
@@ -21,6 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         server.start()
         self.server = server
+        let notifier = Notifier(store: dashboard)
+        notifier.start()
+        self.notifier = notifier
+        notifyItem?.state = notifier.enabled ? .on : .off
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -28,6 +34,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openDashboard(_ sender: Any?) {
         guard let port = server?.port, let url = URL(string: "http://localhost:\(port)") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    @objc private func toggleNotifications(_ sender: NSMenuItem) {
+        guard let notifier else { return }
+        notifier.setEnabled(!notifier.enabled)
+        sender.state = notifier.enabled ? .on : .off
     }
 
     @objc private func copyDashboardAddress(_ sender: Any?) {
@@ -97,6 +109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let copy = NSMenuItem(title: "Copiar endereço para a rede local", action: #selector(copyDashboardAddress(_:)), keyEquivalent: "")
         copy.target = self
         dashboardMenu.addItem(copy)
+        dashboardMenu.addItem(.separator())
+        let notify = NSMenuItem(title: "Notificar eventos importantes", action: #selector(toggleNotifications(_:)), keyEquivalent: "")
+        notify.target = self
+        notifyItem = notify
+        dashboardMenu.addItem(notify)
 
         let window = submenu(main, "Janela")
         window.addItem(withTitle: "Minimizar", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

@@ -51,7 +51,7 @@ for minute in 0..<360 {
         let loot = Int(elapsed / 3_600_000 * [480_000.0, 210_000, 300_000][account] * (1 + 0.2 * cos(t / 31)))
         let supplies = Int(elapsed / 3_600_000 * [390_000.0, 60_000, 330_000][account])
         if minute % 120 == 0 && minute > 0 {
-            store.ingest(account: account, json: #"{"type":"ended","data":{"summary":{"huntId":\#(hunt[account]),"reason":"\#(["stop", "cap_full", "death"][account])","elapsedSec":7200,"level":{"start":\#(140 + account),"end":\#(141 + account)},"xp":"\#(xph * 2)","xpPerHour":\#(xph),"lootGold":\#(loot),"suppliesGold":\#(supplies),"balance":\#(loot - supplies),"killsTotal":1800,"deaths":\#(account == 2 ? 1 : 0)}}}"#)
+            store.ingest(account: account, json: #"{"type":"ended","data":{"summary":{"huntId":\#(hunt[account]),"reason":"\#(["stop", "cap_full", "death"][account])","elapsedSec":7200,"level":{"start":\#(140 + account),"end":\#(141 + account)},"xp":"\#(xph * 2)","xpPerHour":\#(xph),"lootGold":\#(loot),"suppliesGold":\#(supplies),"balance":\#(loot - supplies),"killsTotal":1800,"damageTaken":90000,"healingDone":120000,"kills":{"Dragon":900,"Dragon Lord":300},"drops":{"gold coin":9000,"dragon ham":40,"small ruby":12},"deaths":\#(account == 2 ? 1 : 0)}}}"#)
             store.ingest(account: account, json: #"{"type":"hunt_started","data":{"huntId":\#(hunt[account]),"state":{"party":\#(parties[account])}}}"#)
         }
         store.ingest(account: account, json: #"{"type":"frame","data":{"state":{"party":\#(parties[account]),"cap":{"used":\#([95, 40, 100][account]),"total":100},"keyBagUsed":\#([5, 2, 1][account]),"keyBagMax":5,"keyClock":{"tierMs":1500000,"everyMs":1800000}},"analyzer":{"elapsedMs":\#(Int(elapsed)),"xp":"\#(Int(Double(xph) * elapsed / 3_600_000))","xpPerHour":\#(xph),"killsTotal":\#(minute % 120 * 14),"kills":{"Dragon":\#(minute % 120 * 9),"Dragon Lord":\#(minute % 120 * 2),"Dragon Hatchling":\#(minute % 120 * 3)},"lootGold":\#(loot),"suppliesGold":\#(supplies),"damageDealt":\#(Int(elapsed / 20)),"damageTaken":\#(Int(elapsed / 90)),"healingDone":\#(Int(elapsed / 110))}}}"#)
@@ -64,7 +64,7 @@ clock = Date()
 let server = DashboardServer(store: store)
 let app = NSApplication.shared
 app.setActivationPolicy(.prohibited)
-let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: 1700))
+let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: 2600))
 if light { webView.appearance = NSAppearance(named: .aqua) } else { webView.appearance = NSAppearance(named: .darkAqua) }
 let window = NSWindow(contentRect: webView.frame, styleMask: [.borderless], backing: .buffered, defer: false)
 window.contentView = webView
@@ -74,9 +74,10 @@ window.orderFrontRegardless()
 server.onReady = { port in
     webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/")!))
     DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+        if CommandLine.arguments.contains("expand") { webView.evaluateJavaScript("document.querySelector('tr.run').click()", completionHandler: nil) }
         webView.evaluateJavaScript("document.querySelector('main').scrollHeight") { height, _ in
             let config = WKSnapshotConfiguration()
-            config.rect = NSRect(x: 0, y: 0, width: width, height: min((height as? Double ?? 1600) + 40, 1700))
+            config.rect = NSRect(x: 0, y: 0, width: width, height: min((height as? Double ?? 1600) + 40, 2600))
             webView.takeSnapshot(with: config) { image, error in
                 if let image, let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
                     try? png.write(to: URL(fileURLWithPath: output))

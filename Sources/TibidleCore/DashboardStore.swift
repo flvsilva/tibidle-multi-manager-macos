@@ -137,7 +137,9 @@ public final class DashboardStore {
         default:
             return
         }
-        entry["updatedAt"] = date.timeIntervalSince1970 * 1000
+        let nowMs = date.timeIntervalSince1970 * 1000
+        if entry["status"] as? String != live[account]["status"] as? String || entry["statusSince"] == nil { entry["statusSince"] = nowMs }
+        entry["updatedAt"] = nowMs
         live[account] = entry
     }
 
@@ -171,29 +173,40 @@ public final class DashboardStore {
 
     public func stateJSON() -> Data {
         queue.sync {
-            let accounts = live.enumerated().map { index, entry -> [String: Any] in
-                var out = entry
-                out["index"] = index
-                out["label"] = names[index]
-                if let eventos = entry["missions"] as? [String: Any] {
-                    out["daily"] = MissionAdvisor.evaluate(
-                        eventos: eventos, live: entry["missionsLive"] as? [String: Any],
-                        hunting: entry["status"] as? String == "hunting", training: entry["training"] as? Bool == true,
-                        currentHuntId: number(entry["huntId"]).map { Int($0) }, catalog: catalog,
-                        analyzer: entry["analyzer"] as? [String: Any], weekLive: entry["weekLive"] as? Double,
-                        now: now().timeIntervalSince1970 * 1000)
-                } else if let id = number(entry["huntId"]), let hunt = catalog.hunt(id: Int(id)) {
-                    out["daily"] = ["missions": [], "currentHunt": ["id": hunt.id, "title": hunt.title]] as [String: Any]
-                }
-                out["missions"] = nil
-                out["missionsLive"] = nil
-                out["weekLive"] = nil
-                if entry["status"] as? String == "hunting", let state = entry["state"] as? [String: Any] {
-                    out["supply"] = HuntAlerts.evaluate(state: state)
-                }
-                return out
+            let accounts = buildAccounts()
+            let nowMs = now().timeIntervalSince1970 * 1000
+            return json(["generatedAt": nowMs, "accounts": accounts,
+                         "attention": Attention.evaluate(accounts: accounts, now: nowMs).map(\.json)])
+        }
+    }
+
+    /// Current attention items (used by the macOS notifier).
+    public func attention() -> [AttentionItem] {
+        queue.sync { Attention.evaluate(accounts: buildAccounts(), now: now().timeIntervalSince1970 * 1000) }
+    }
+
+    private func buildAccounts() -> [[String: Any]] {
+        live.enumerated().map { index, entry -> [String: Any] in
+            var out = entry
+            out["index"] = index
+            out["label"] = names[index]
+            if let eventos = entry["missions"] as? [String: Any] {
+                out["daily"] = MissionAdvisor.evaluate(
+                    eventos: eventos, live: entry["missionsLive"] as? [String: Any],
+                    hunting: entry["status"] as? String == "hunting", training: entry["training"] as? Bool == true,
+                    currentHuntId: number(entry["huntId"]).map { Int($0) }, catalog: catalog,
+                    analyzer: entry["analyzer"] as? [String: Any], weekLive: entry["weekLive"] as? Double,
+                    now: now().timeIntervalSince1970 * 1000)
+            } else if let id = number(entry["huntId"]), let hunt = catalog.hunt(id: Int(id)) {
+                out["daily"] = ["missions": [], "currentHunt": ["id": hunt.id, "title": hunt.title]] as [String: Any]
             }
-            return json(["generatedAt": now().timeIntervalSince1970 * 1000, "accounts": accounts])
+            out["missions"] = nil
+            out["missionsLive"] = nil
+            out["weekLive"] = nil
+            if entry["status"] as? String == "hunting", let state = entry["state"] as? [String: Any] {
+                out["supply"] = HuntAlerts.evaluate(state: state)
+            }
+            return out
         }
     }
 
@@ -270,5 +283,161 @@ public final class DashboardStore {
             }
         }
         while sqlite3_step(statement) == SQLITE_ROW { row(statement) }
+    }
+}
+
+// MARK: Insights (ranking, daily totals) and CSV export
+
+extension DashboardStore {
+    /// Runs shorter than this say little about a map's yield.
+    static let minRankedSeconds = 300.0
+
+    private func allRuns(limit: Int = 5000) -> [(account: Int, endedAt: Double, summary: [String: Any])] {
+        var runs: [(Int, Double, [String: Any])] = []
+        query("SELECT account, ended_at, summary FROM runs ORDER BY ended_at DESC LIMIT ?", [.int(limit)]) { row in
+            guard let text = sqlite3_column_text(row, 2),
+                  let summary = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)) as? [String: Any]
+            else { return }
+            runs.append((Int(sqlite3_column_int(row, 0)), sqlite3_column_double(row, 1), summary))
+        }
+        return runs
+    }
+
+    /// Yield per map, overall (`account: null`) and per account, from finished hunts.
+    public func rankingJSON() -> Data {
+        queue.sync {
+            struct Total { var runs = 0, seconds = 0.0, xp = 0.0, balance = 0.0, kills = 0.0, deaths = 0.0 }
+            var totals: [String: (account: Int?, huntId: Int, total: Total)] = [:]
+            for run in allRuns() {
+                let seconds = number(run.summary["elapsedSec"]) ?? 0
+                guard seconds >= Self.minRankedSeconds, let huntId = number(run.summary["huntId"]).map({ Int($0) }) else { continue }
+                for account in [run.account, -1] {
+                    let key = "\(account)|\(huntId)"
+                    var item = totals[key] ?? (account >= 0 ? account : nil, huntId, Total())
+                    item.total.runs += 1
+                    item.total.seconds += seconds
+                    item.total.xp += number(run.summary["xp"]) ?? 0
+                    item.total.balance += number(run.summary["balance"]) ?? 0
+                    item.total.kills += number(run.summary["killsTotal"]) ?? 0
+                    item.total.deaths += number(run.summary["deaths"]) ?? 0
+                    totals[key] = item
+                }
+            }
+            let rows = totals.values.map { item -> [String: Any] in
+                let hours = item.total.seconds / 3600
+                var row: [String: Any] = [
+                    "huntId": item.huntId, "runs": item.total.runs, "hours": (hours * 100).rounded() / 100,
+                    "xpPerHour": Int((item.total.xp / hours).rounded()), "profitPerHour": Int((item.total.balance / hours).rounded()),
+                    "killsPerHour": Int((item.total.kills / hours).rounded()), "deaths": Int(item.total.deaths),
+                    "title": catalog.hunt(id: item.huntId)?.title ?? (item.huntId == 1 ? "Tower" : "#\(item.huntId)"),
+                ]
+                row["account"] = item.account ?? NSNull()
+                return row
+            }.sorted { ($0["profitPerHour"] as? Int ?? 0) > ($1["profitPerHour"] as? Int ?? 0) }
+            return json(["minMinutes": Int(Self.minRankedSeconds / 60), "rows": rows])
+        }
+    }
+
+    /// Totals per local calendar day and account; hunted time comes from the per-minute samples.
+    public func dailyJSON(days: Int) -> Data {
+        queue.sync {
+            let calendar = Calendar.current
+            let formatter = DateFormatter()
+            formatter.calendar = calendar
+            formatter.timeZone = calendar.timeZone
+            formatter.dateFormat = "yyyy-MM-dd"
+            let start = calendar.startOfDay(for: now().addingTimeInterval(-Double(days - 1) * 86400))
+            func day(_ ts: Double) -> String { formatter.string(from: Date(timeIntervalSince1970: ts)) }
+
+            struct Cell { var xp = 0.0, balance = 0.0, kills = 0.0, runs = 0, deaths = 0.0, huntedSeconds = 0.0 }
+            var cells: [String: [Int: Cell]] = [:]
+            for run in allRuns() where run.endedAt >= start.timeIntervalSince1970 {
+                let key = day(run.endedAt)
+                var cell = cells[key, default: [:]][run.account] ?? Cell()
+                cell.xp += number(run.summary["xp"]) ?? 0
+                cell.balance += number(run.summary["balance"]) ?? 0
+                cell.kills += number(run.summary["killsTotal"]) ?? 0
+                cell.deaths += number(run.summary["deaths"]) ?? 0
+                cell.runs += 1
+                cells[key, default: [:]][run.account] = cell
+            }
+            var previous: (account: Int, ts: Double)?
+            query("SELECT account, ts FROM samples WHERE ts >= ? ORDER BY account, ts", [.double(start.timeIntervalSince1970)]) { row in
+                let account = Int(sqlite3_column_int(row, 0)), ts = sqlite3_column_double(row, 1)
+                let gap = previous.flatMap { $0.account == account ? ts - $0.ts : nil } ?? Self.sampleInterval
+                let key = day(ts)
+                var cell = cells[key, default: [:]][account] ?? Cell()
+                cell.huntedSeconds += gap <= 3 * Self.sampleInterval ? gap : Self.sampleInterval
+                cells[key, default: [:]][account] = cell
+                previous = (account, ts)
+            }
+            let rows = cells.keys.sorted(by: >).map { key -> [String: Any] in
+                let accounts = cells[key] ?? [:]
+                var perAccount: [String: Any] = [:]
+                for (account, cell) in accounts {
+                    perAccount[String(account)] = ["xp": Int(cell.xp), "balance": Int(cell.balance), "kills": Int(cell.kills), "runs": cell.runs,
+                                                   "deaths": Int(cell.deaths), "huntedSeconds": Int(cell.huntedSeconds)]
+                }
+                let sum = accounts.values.reduce(Cell()) { Cell(xp: $0.xp + $1.xp, balance: $0.balance + $1.balance, kills: $0.kills + $1.kills,
+                                                                runs: $0.runs + $1.runs, deaths: $0.deaths + $1.deaths, huntedSeconds: $0.huntedSeconds + $1.huntedSeconds) }
+                return ["date": key, "accounts": perAccount,
+                        "total": ["xp": Int(sum.xp), "balance": Int(sum.balance), "kills": Int(sum.kills), "runs": sum.runs,
+                                  "deaths": Int(sum.deaths), "huntedSeconds": Int(sum.huntedSeconds)]]
+            }
+            return json(["days": rows])
+        }
+    }
+
+    // MARK: CSV
+
+    static func csvCell(_ value: Any?) -> String {
+        var text: String
+        switch value {
+        case nil, is NSNull: text = ""
+        case let list as [String]: text = list.joined(separator: "; ")
+        case let n as NSNumber: text = n.stringValue
+        default: text = "\(value!)"
+        }
+        // Spreadsheets run cells that start with these characters as formulas.
+        if let first = text.first, "=+-@\t\r".contains(first), Double(text) == nil { text = "'" + text }
+        return text.contains(where: { ",\"\n\r".contains($0) }) ? "\"" + text.replacingOccurrences(of: "\"", with: "\"\"") + "\"" : text
+    }
+
+    private func csv(_ header: [String], _ rows: [[Any?]]) -> Data {
+        let lines = [header.joined(separator: ",")] + rows.map { $0.map(Self.csvCell).joined(separator: ",") }
+        return Data((lines.joined(separator: "\r\n") + "\r\n").utf8)
+    }
+
+    public func huntsCSV() -> Data {
+        queue.sync {
+            let iso = ISO8601DateFormatter()
+            let rows = allRuns().map { run -> [Any?] in
+                let s = run.summary
+                let level = s["level"] as? [String: Any]
+                return [iso.string(from: Date(timeIntervalSince1970: run.endedAt)),
+                        names.indices.contains(run.account) ? names[run.account] : "Conta \(run.account + 1)",
+                        number(s["huntId"]).flatMap { catalog.hunt(id: Int($0))?.title }, s["huntId"], s["characters"],
+                        s["elapsedSec"], s["reason"], level?["start"], level?["end"], s["xp"], s["xpPerHour"], s["lootGold"], s["suppliesGold"],
+                        s["balance"], s["killsTotal"], s["deaths"], s["deathCause"]]
+            }
+            return csv(["fim", "conta", "hunt", "hunt_id", "personagens", "duracao_s", "motivo", "level_ini", "level_fim", "xp", "xp_h",
+                        "loot", "supplies", "balance", "kills", "mortes", "causa_morte"], rows)
+        }
+    }
+
+    public func historyCSV(hours: Double) -> Data {
+        queue.sync {
+            var rows: [[Any?]] = []
+            let iso = ISO8601DateFormatter()
+            query("SELECT account, ts, hunt_id, elapsed_ms, xp, xp_per_hour, loot_gold, supplies_gold, kills_total FROM samples WHERE ts >= ? ORDER BY ts",
+                  [.double(now().timeIntervalSince1970 - hours * 3600)]) { row in
+                let account = Int(sqlite3_column_int(row, 0))
+                rows.append([iso.string(from: Date(timeIntervalSince1970: sqlite3_column_double(row, 1))),
+                             names.indices.contains(account) ? names[account] : "Conta \(account + 1)", sqlite3_column_int64(row, 2),
+                             sqlite3_column_int64(row, 3), sqlite3_column_text(row, 4).map { String(cString: $0) }, sqlite3_column_int64(row, 5),
+                             sqlite3_column_int64(row, 6), sqlite3_column_int64(row, 7), sqlite3_column_int64(row, 8)])
+            }
+            return csv(["horario", "conta", "hunt_id", "tempo_ms", "xp", "xp_h", "loot", "supplies", "kills"], rows)
+        }
     }
 }

@@ -296,3 +296,101 @@ final class MissionInsightsTests: XCTestCase {
         XCTAssertEqual((full["alerts"] as! [[String: String]]).first?["level"], "bad")
     }
 }
+
+final class InsightsTests: XCTestCase {
+    private var clock = Date(timeIntervalSince1970: 1_800_000_000)
+    private func makeStore() -> DashboardStore {
+        let store = DashboardStore(databaseURL: nil, now: { self.clock })
+        store.setHuntCatalog(HuntCatalog(json: Data(catalogJSON.utf8))!)
+        store.setAccountNames(["Um", "Dois", "Três", "Quatro"])
+        return store
+    }
+    private func object(_ data: Data) -> [String: Any] { try! JSONSerialization.jsonObject(with: data) as! [String: Any] }
+
+    private func end(_ store: DashboardStore, account: Int = 0, map: Int, seconds: Int, xp: Int, balance: Int, deaths: Int = 0, reason: String = "stop") {
+        clock += 60
+        store.ingest(account: account, json: #"{"type":"ended","data":{"summary":{"huntId":\#(map),"reason":"\#(reason)","elapsedSec":\#(seconds),"xp":"\#(xp)","lootGold":1,"suppliesGold":1,"killsTotal":\#(seconds / 10),"balance":\#(balance),"deaths":\#(deaths)}}}"#)
+    }
+
+    func testRankingAggregatesRunsPerMapAndIgnoresShortOnes() {
+        let store = makeStore()
+        end(store, map: 10, seconds: 3600, xp: 1000, balance: 500)
+        end(store, map: 10, seconds: 3600, xp: 3000, balance: 1500, deaths: 1)
+        end(store, account: 1, map: 10, seconds: 3600, xp: 500, balance: 100)
+        end(store, map: 11, seconds: 7200, xp: 2000, balance: 4000)
+        end(store, map: 12, seconds: 120, xp: 99999, balance: 99999)   // too short to rank
+        let rows = object(store.rankingJSON())["rows"] as! [[String: Any]]
+        let all = rows.filter { $0["account"] is NSNull }
+        XCTAssertEqual(all.map { $0["huntId"] as? Int }, [11, 10])
+        let dragon = all.first { $0["huntId"] as? Int == 10 }!
+        XCTAssertEqual(dragon["runs"] as? Int, 3)
+        XCTAssertEqual(dragon["xpPerHour"] as? Int, 1500)         // 4500 xp in 3 h
+        XCTAssertEqual(dragon["profitPerHour"] as? Int, 700)      // 2100 in 3 h
+        XCTAssertEqual(dragon["deaths"] as? Int, 1)
+        XCTAssertEqual(dragon["title"] as? String, "Dragon Lair")
+        XCTAssertFalse(rows.contains { $0["huntId"] as? Int == 12 })
+        XCTAssertEqual(rows.filter { $0["account"] as? Int == 1 }.count, 1)
+    }
+
+    func testDailyTotalsUseRunsAndSampledTime() {
+        let store = makeStore()
+        store.ingest(account: 0, json: #"{"type":"hunt_started","data":{"huntId":10}}"#)
+        for _ in 0..<10 {
+            clock += 60
+            store.ingest(account: 0, json: #"{"type":"frame","data":{"analyzer":{"elapsedMs":60000,"xp":"1","xpPerHour":1,"lootGold":0,"suppliesGold":0,"killsTotal":1}}}"#)
+        }
+        end(store, map: 10, seconds: 600, xp: 500, balance: 70, deaths: 1)
+        let days = object(store.dailyJSON(days: 3))["days"] as! [[String: Any]]
+        XCTAssertEqual(days.count, 1)
+        let total = days[0]["total"] as! [String: Any]
+        XCTAssertEqual(total["xp"] as? Int, 500)
+        XCTAssertEqual(total["balance"] as? Int, 70)
+        XCTAssertEqual(total["deaths"] as? Int, 1)
+        XCTAssertEqual(total["huntedSeconds"] as? Int, 600)
+        XCTAssertNotNil((days[0]["accounts"] as! [String: Any])["0"])
+    }
+
+    func testAttentionListsWhatNeedsAction() {
+        let store = makeStore()
+        store.ingest(account: 0, json: #"{"type":"welcome","data":{"eventos":{"serverDay":"d","nextDailyResetAt":\#(Int(clock.timeIntervalSince1970 * 1000) + 3_600_000),"diarias":{"slots":[{"id":"t1","title":"Caçada","kind":"monster","quantity":10,"progresso":10,"resgatado":false,"targets":["Dragon"]},null]}}}}"#)
+        store.ingest(account: 1, json: #"{"type":"hunt_started","data":{"huntId":10,"state":{"cap":{"used":100,"total":100}}}}"#)
+        end(store, account: 2, map: 10, seconds: 900, xp: 1, balance: -5, deaths: 1, reason: "death")
+        store.ingest(account: 3, json: #"{"type":"welcome","data":{}}"#)
+        clock += 20 * 60
+        let kinds = Set(store.attention().map { "\($0.kind)|\($0.account)" })
+        XCTAssertTrue(kinds.contains("ready|0"))
+        XCTAssertTrue(kinds.contains("streak|0") == false, "no streak data, so no streak warning")
+        XCTAssertTrue(kinds.contains("cap|1"))
+        XCTAssertTrue(kinds.contains("ended|2"))
+        XCTAssertTrue(kinds.contains("idle|3"))
+        let items = store.attention()
+        XCTAssertEqual(items.first?.level, "bad")
+        XCTAssertTrue(items.filter { $0.kind == "idle" }.allSatisfy { !$0.notify })
+        XCTAssertEqual(Set(items.map(\.key)).count, items.count, "keys must be unique")
+        XCTAssertEqual((object(store.stateJSON())["attention"] as! [[String: Any]]).count, items.count)
+        clock += 2 * 3600
+        XCTAssertFalse(store.attention().contains { $0.kind == "ended" }, "old endings stop being news")
+    }
+
+    func testCSVEscapesAndNeutralisesFormulas() {
+        XCTAssertEqual(DashboardStore.csvCell("a,b"), "\"a,b\"")
+        XCTAssertEqual(DashboardStore.csvCell("say \"hi\""), "\"say \"\"hi\"\"\"")
+        XCTAssertEqual(DashboardStore.csvCell("=HYPERLINK(\"x\")"), "\"'=HYPERLINK(\"\"x\"\")\"")
+        XCTAssertEqual(DashboardStore.csvCell("-50000"), "-50000")
+        XCTAssertEqual(DashboardStore.csvCell(["Ann", "Bob"]), "Ann; Bob")
+        let store = makeStore()
+        end(store, map: 10, seconds: 3600, xp: 10, balance: -3)
+        let text = String(data: store.huntsCSV(), encoding: .utf8)!
+        XCTAssertTrue(text.hasPrefix("fim,conta,hunt,"))
+        XCTAssertTrue(text.contains("Um,Dragon Lair,10"))
+    }
+
+    func testRouterServesTheNewEndpoints() {
+        let store = makeStore()
+        for path in ["/api/ranking", "/api/daily?days=7", "/api/hunts.csv", "/api/history.csv?hours=2"] {
+            XCTAssertEqual(DashboardRouter.respond(method: "GET", target: path, store: store).status, 200, path)
+        }
+        let csv = DashboardRouter.respond(method: "GET", target: "/api/hunts.csv", store: store).serialized()
+        XCTAssertTrue(String(decoding: csv, as: UTF8.self).contains("Content-Disposition: attachment"))
+    }
+}

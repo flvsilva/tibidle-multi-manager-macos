@@ -57,11 +57,18 @@ A página atualiza sozinha e mostra:
 - o histórico de hunts encerradas: duração, motivo (morte, cap cheio, sem gold…), level, XP, loot, supplies, balance e mortes;
 - as **missões diárias** de cada conta: progresso, tempo até o reset e se a hunt atual conta ou não;
 - a **hunt sugerida** para cada missão de monstro, quando a hunt atual não conta ou nada está em andamento;
-- o progresso offline informado pelo jogo ao reconectar.
+- o progresso offline informado pelo jogo ao reconectar;
+- um **resumo geral** (XP/h e lucro/h somados, contas caçando, missões a resgatar, reset diário) e um painel **"precisa de atenção"**: missão pronta, sequência semanal em risco, mochila ou bolsa de chaves cheia, hunt que terminou por morte/sem gold/cap cheio, conta parada na cidade e sessão aberta em outro lugar;
+- a **previsão** de cada missão de monstro (kills/h dos alvos → quando conclui e se dá tempo antes do reset), a **sequência semanal**, as **metas semanais**, as chaves (com hora da próxima) e a mochila;
+- **totais por dia** (XP, lucro, kills, horas caçadas por conta) e um **ranking de hunts** por mapa (XP/h, lucro/h, kills/h, mortes), com filtro por conta; só entram hunts de 5 min ou mais;
+- detalhes de cada hunt encerrada (clique na linha): lucro/h e por kill, dano recebido e cura, causa da morte, monstros e drops;
+- exportação em **CSV** do histórico de hunts e das amostras por minuto.
+
+**Notificações.** O app avisa pelo macOS quando algo novo entra no painel de atenção (missão pronta, sequência em risco, mochila/chaves cheias, hunt que acabou mal). Liga e desliga em **Dashboard → Notificar eventos importantes**. É local: nada sai do Mac. Só funciona no `.app` instalado, não no `swift run`.
 
 **Missões diárias.** Cada missão de monstro lista os mapas que têm o monstro-alvo, usando a lista pública de hunts do jogo (`https://play.tibidle.com/hunts`), a mesma que o jogo usa no botão "Explorar". O app baixa essa lista sozinho, sem cookies nem login, guarda uma cópia em `hunts-catalog.json` e atualiza a cada 12 horas. Estados exibidos: *Contando nesta hunt*, *A hunt atual não conta*, *Pendente*, *Concluída — resgate no jogo*, *Resgatada*, além de *Elite* e *Forja* (que não dependem de hunt). A regra "esta hunt conta" é inferida dos monstros do mapa; o app não consegue confirmar as regras do servidor.
 
-**Como os dados são coletados.** Um script somente leitura (`Sources/TibidleCore/CollectorScript.swift`) roda apenas em `play.tibidle.com` e observa as mensagens que o jogo **recebe** do servidor pelo WebSocket. Ele não envia nada ao jogo, não toca nas mensagens enviadas (onde trafega a autenticação) e repassa ao app só uma lista fixa de campos de hunt e das duas missões diárias (sem calendário de login, sequência, lista semanal nem prêmios além do nome e da quantidade); o resto, inclusive o token de sessão, é descartado. Os testes em `Tests/TibidleCoreTests/DashboardTests.swift` executam esse script e verificam isso.
+**Como os dados são coletados.** Um script somente leitura (`Sources/TibidleCore/CollectorScript.swift`) roda apenas em `play.tibidle.com` e observa as mensagens que o jogo **recebe** do servidor pelo WebSocket. Ele não envia nada ao jogo, não toca nas mensagens enviadas (onde trafega a autenticação) e repassa ao app só uma lista fixa de campos de hunt e das duas missões diárias (sem calendário de login nem prêmios além do nome e da quantidade; da sequência e das metas semanais só os números de progresso); o resto, inclusive o token de sessão, é descartado. Os testes em `Tests/TibidleCoreTests/DashboardTests.swift` executam esse script e verificam isso.
 
 **Privacidade.** A dashboard é somente leitura e não tem senha: **qualquer pessoa na mesma rede** pode ver os dados de hunt (nomes dos personagens, levels, XP, gold). Ela não expõe logins, cookies nem permite ações. Use em redes de confiança.
 
@@ -105,7 +112,9 @@ swift run            # roda sem empacotar (prefira o .app: o bundle ID separa os
 | `Sources/TibidleCore/DashboardStore.swift` | Estado ao vivo e histórico (SQLite) |
 | `Sources/TibidleCore/DashboardServer.swift`, `DashboardRouter.swift` | Servidor HTTP da rede local |
 | `Sources/TibidleCore/HuntCatalog.swift`, `HuntCatalogLoader.swift`, `MissionAdvisor.swift` | Lista de hunts e avaliação das missões diárias |
+| `Sources/TibidleCore/Attention.swift` | Painel "precisa de atenção" |
 | `Sources/TibidleCore/DashboardPage.swift` | Página da dashboard |
+| `Sources/TibidleMultiManager/Notifier.swift` | Notificações do macOS |
 | `Sources/DashboardPreview/main.swift` | Pré-visualização com dados de exemplo |
 | `scripts/build-app.sh` | Gera o `.app` e o ZIP |
 

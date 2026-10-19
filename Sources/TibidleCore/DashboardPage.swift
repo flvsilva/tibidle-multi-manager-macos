@@ -82,6 +82,25 @@ public enum DashboardPage {
     .goal { display: grid; grid-template-columns: minmax(0, 1fr) 70px auto; gap: 8px; align-items: center; font-size: 12px; }
     .alert { margin-top: 8px; font-size: 12px; border-radius: 6px; padding: 6px 8px; background: var(--surface-2); }
     .alert.warn { color: var(--warn-text); } .alert.bad { color: var(--bad-text); }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 45%), 1fr)); gap: 10px; margin-bottom: 14px; }
+    .summary > div { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+    .summary small { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    .summary b { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .attention { margin-bottom: 14px; display: grid; gap: 6px; }
+    .attention .item { display: flex; gap: 8px; align-items: baseline; background: var(--surface); border: 1px solid var(--border);
+      border-left: 4px solid var(--axis); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
+    .attention .item.bad { border-left-color: var(--critical); } .attention .item.warn { border-left-color: var(--warning); }
+    .attention .item.info { border-left-color: var(--s0); }
+    .attention .ok { color: var(--muted); font-size: 12px; }
+    .linkbtn { color: var(--ink-2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px; font-size: 12px; text-decoration: none; }
+    .linkbtn:hover { color: var(--ink); }
+    tr.run { cursor: pointer; } tr.run:hover td { background: var(--surface-2); }
+    tr.detail td { white-space: normal; background: var(--surface-2); font-size: 12px; color: var(--ink-2); }
+    .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 6px 16px; }
+    .detail-grid b { color: var(--ink); font-weight: 600; }
+    td.clip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+    select { background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: 12px; padding: 3px 6px; }
+    .hbar { display: inline-block; height: 6px; border-radius: 3px; background: var(--s0); vertical-align: middle; min-width: 2px; }
     .empty { color: var(--muted); font-size: 13px; padding: 14px 0 4px; }
 
     .section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
@@ -112,7 +131,7 @@ public enum DashboardPage {
     th { color: var(--muted); font-weight: 500; font-size: 12px; }
     td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
     td .swatch { display: inline-block; margin-right: 6px; vertical-align: 0; }
-    @media (max-width: 520px) { .hero b { font-size: 21px; } .stats { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 520px) { main { padding: 14px 16px 40px; } .summary b { font-size: 17px; } td.clip { max-width: 140px; } .hero b { font-size: 21px; } .stats { grid-template-columns: repeat(2, 1fr); } }
     @media (forced-colors: active) { .swatch, .legend i, .status i { forced-color-adjust: none; } }
     </style>
     </head>
@@ -123,11 +142,14 @@ public enum DashboardPage {
         <span class="meta" id="meta">Conectando…</span>
         <button class="theme" id="theme" type="button">Tema</button>
       </header>
+      <div class="summary" id="summary"></div>
+      <div class="attention" id="attention"></div>
       <div class="cards" id="cards"></div>
 
       <section class="section">
         <div class="toolbar">
           <h2>Ao longo do tempo</h2>
+          <a class="linkbtn" id="csv-history" href="/api/history.csv" download>CSV</a>
           <div class="seg" id="range">
             <button type="button" data-h="1">1h</button><button type="button" data-h="6">6h</button>
             <button type="button" data-h="12" aria-pressed="true">12h</button><button type="button" data-h="24">24h</button>
@@ -143,7 +165,22 @@ public enum DashboardPage {
       </section>
 
       <section class="section">
-        <div class="toolbar"><h2>Hunts encerradas</h2></div>
+        <div class="toolbar"><h2>Totais por dia</h2></div>
+        <div class="table-wrap" id="daily"></div>
+      </section>
+
+      <section class="section">
+        <div class="toolbar"><h2>Ranking de hunts</h2>
+          <select id="rank-account" aria-label="Conta"></select>
+          <select id="rank-sort" aria-label="Ordenar por">
+            <option value="profitPerHour">Lucro/h</option><option value="xpPerHour">XP/h</option><option value="killsPerHour">Kills/h</option>
+          </select>
+        </div>
+        <div class="table-wrap" id="ranking"></div>
+      </section>
+
+      <section class="section">
+        <div class="toolbar"><h2>Hunts encerradas</h2><a class="linkbtn" href="/api/hunts.csv" download>CSV</a></div>
         <div class="table-wrap" id="hunts"></div>
       </section>
     </main>
@@ -296,9 +333,12 @@ public enum DashboardPage {
           stat('Tempo', duration(elapsed)), stat('XP', fmt(an.xp)), stat('Kills', fmt(an.killsTotal)),
           stat('Loot', fmt(an.lootGold)), stat('Supplies', fmt(an.suppliesGold)), stat('Balance', signed(profit), profit >= 0 ? 'pos' : 'neg'),
           stat('Dano/h', fmt(perHour(an.damageDealt, elapsed))), stat('Recebido/h', fmt(perHour(an.damageTaken, elapsed))),
-          stat('Cura/h', fmt(perHour(an.healingDone, elapsed)))));
+          stat('Cura/h', fmt(perHour(an.healingDone, elapsed))), stat('Lucro/kill', num(an.killsTotal) ? signed(profit / num(an.killsTotal)) : '—'),
+          stat('Kills/h', fmt(perHour(an.killsTotal, elapsed)))));
+        const drops = topKills(an.drops, 12).filter(([n]) => n.toLowerCase() !== 'gold coin').slice(0, 5);
         const kills = topKills(an.kills);
         if (kills.length) node.append(el('div', { class: 'monsters' }, 'Mais abatidos: ' + kills.map(([m, n]) => `${m} ×${fmt(n)}`).join(' · ')));
+        if (drops.length) node.append(el('div', { class: 'monsters' }, 'Drops: ' + drops.map(([m, n]) => `${m} ×${fmt(n)}`).join(' · ')));
       } else if (a.lastSummary) {
         const s = a.lastSummary;
         node.append(el('div', { class: 'note' },
@@ -335,12 +375,33 @@ public enum DashboardPage {
       try {
         const data = await getJSON('/api/state');
         lastAccounts = data.accounts;
+        renderSummary(data);
         $('cards').replaceChildren(...data.accounts.map(card));
         $('meta').textContent = `Atualizado às ${new Date(data.generatedAt).toLocaleTimeString('pt-BR')}`;
         renderLegend();
       } catch (_) {
         $('meta').textContent = 'Sem conexão com o gerenciador — ele está aberto?';
       }
+    }
+
+    function renderSummary(data) {
+      const hunting = data.accounts.filter((a) => a.status === 'hunting' && a.analyzer);
+      let xp = 0, profit = 0;
+      for (const a of hunting) {
+        xp += num(a.analyzer.xpPerHour);
+        profit += perHour(num(a.analyzer.lootGold) - num(a.analyzer.suppliesGold), a.analyzer.elapsedMs);
+      }
+      const ready = data.accounts.reduce((n, a) => n + (((a.daily || {}).missions || []).filter((m) => m.state === 'ready').length), 0);
+      const reset = data.accounts.map((a) => (a.daily || {}).dailyResetAt).filter(Boolean).sort()[0];
+      const tile = (label, value, cls) => el('div', null, el('small', null, label), el('b', cls ? { class: cls } : null, value));
+      $('summary').replaceChildren(
+        tile('XP/h total', fmt(xp)), tile('Lucro/h total', signed(profit), profit >= 0 ? 'pos' : 'neg'),
+        tile('Caçando', `${hunting.length}/${data.accounts.length}`), tile('Missões p/ resgatar', String(ready), ready ? 'pos' : ''),
+        tile('Reset diário', reset ? `em ${until(reset)}` : '—'));
+      const items = data.attention || [];
+      $('attention').replaceChildren(...(items.length ? items.map((i) => el('div', { class: 'item ' + i.level },
+        el('span', { class: 'swatch', style: { background: SERIES[i.account] } }), i.text))
+        : [el('div', { class: 'ok' }, '✓ Nada precisa de atenção agora.')]));
     }
 
     // ---- charts ----
@@ -468,25 +529,101 @@ public enum DashboardPage {
         $('hunts').replaceChildren(el('table', null,
           el('thead', null, el('tr', null, ['Fim', 'Conta', 'Hunt', 'Personagens', 'Duração', 'Motivo'].map((h) => el('th', null, h)),
             ['Level', 'XP', 'XP/h', 'Loot', 'Supplies', 'Balance', 'Mortes'].map((h) => el('th', { class: 'n' }, h)))),
-          el('tbody', null, hunts.map((h) => el('tr', null,
+          el('tbody', null, hunts.flatMap((h) => [huntRow(h), huntDetail(h)]))));
+      } catch (_) {}
+    }
+
+    function huntDetail(h) {
+      const hours = num(h.elapsedSec) / 3600, bal = num(h.balance);
+      const item = (k, v) => el('div', null, `${k}: `, el('b', null, v));
+      const list = (o, n) => topKills(o, n).filter(([name]) => name.toLowerCase() !== 'gold coin').map(([m, c]) => `${m} ×${fmt(c)}`).join(' · ') || '—';
+      const cells = [
+        item('Lucro/h', hours ? signed(bal / hours) : '—'), item('Lucro/kill', num(h.killsTotal) ? signed(bal / num(h.killsTotal)) : '—'),
+        item('Kills', fmt(h.killsTotal)), item('Kills/h', hours ? fmt(num(h.killsTotal) / hours) : '—'),
+        item('Dano recebido', fmt(h.damageTaken)), item('Cura', fmt(h.healingDone)),
+        item('Mortes', num(h.deaths) ? `${fmt(h.deaths)}${h.deathCause ? ` (${h.deathCause})` : ''}` : '0'),
+        item('Personagens', (h.characters || []).join(', ') || '—'),
+      ];
+      const tr = el('tr', { class: 'detail', hidden: '' }, el('td', { colspan: '13' }, el('div', { class: 'detail-grid' }, cells),
+        el('div', { style: { marginTop: '6px' } }, 'Mais abatidos: ' + list(h.kills, 6)),
+        el('div', null, 'Drops: ' + list(h.drops, 12))));
+      h._detail = tr;
+      return tr;
+    }
+
+    function huntRow(h) {
+      const row = el('tr', { class: 'run', title: 'Clique para ver detalhes' },
             el('td', null, dateTime(h.endedAt)),
             el('td', null, el('span', { class: 'swatch', style: { background: SERIES[h.account] } }), h.label),
             el('td', null, h.huntTitle || (h.huntId ? `#${h.huntId}` : '—')),
-            el('td', null, (h.characters || []).join(', ') || '—'),
+            el('td', { class: 'clip' }, (h.characters || []).join(', ') || '—'),
             el('td', null, duration(num(h.elapsedSec) * 1000)),
             el('td', null, REASONS[h.reason] || h.reason || '—'),
             el('td', { class: 'n' }, h.level ? (h.level.end > h.level.start ? `${h.level.start}→${h.level.end}` : h.level.end) : '—'),
             el('td', { class: 'n' }, fmt(h.xp)), el('td', { class: 'n' }, fmt(h.xpPerHour)),
             el('td', { class: 'n' }, fmt(h.lootGold)), el('td', { class: 'n' }, fmt(h.suppliesGold)),
             el('td', { class: 'n ' + (num(h.balance) >= 0 ? 'pos' : 'neg') }, signed(h.balance)),
-            el('td', { class: 'n' }, fmt(h.deaths)))))));
+            el('td', { class: 'n' }, fmt(h.deaths)));
+      row.addEventListener('click', () => { h._detail.hidden = !h._detail.hidden; });
+      return row;
+    }
+
+    // ---- daily totals ----
+    async function refreshDaily() {
+      try {
+        const { days } = await getJSON('/api/daily?days=14');
+        if (!days.length) { $('daily').replaceChildren(el('div', { class: 'empty' }, 'Sem dados ainda.')); return; }
+        const maxHunted = Math.max(1, ...days.map((d) => d.total.huntedSeconds));
+        $('daily').replaceChildren(el('table', null,
+          el('thead', null, el('tr', null, el('th', null, 'Dia'), el('th', null, 'Tempo caçado'), el('th', null, 'Por conta (horas caçadas)'),
+            ['XP', 'Lucro', 'Kills', 'Hunts', 'Mortes'].map((h) => el('th', { class: 'n' }, h)))),
+          el('tbody', null, days.map((d) => el('tr', null,
+            el('td', null, d.date.split('-').reverse().slice(0, 2).join('/')),
+            el('td', null, el('span', { class: 'hbar', style: { width: `${Math.max(2, 70 * d.total.huntedSeconds / maxHunted)}px` } }), ' ', duration(d.total.huntedSeconds * 1000)),
+            el('td', null, lastAccounts.map((a) => {
+              const c = d.accounts[String(a.index)];
+              return el('span', { style: { marginRight: '10px' } }, el('span', { class: 'swatch', style: { background: SERIES[a.index] } }),
+                c ? `${(c.huntedSeconds / 3600).toFixed(1)}h` : '0h');
+            })),
+            el('td', { class: 'n' }, fmt(d.total.xp)), el('td', { class: 'n ' + (d.total.balance >= 0 ? 'pos' : 'neg') }, signed(d.total.balance)),
+            el('td', { class: 'n' }, fmt(d.total.kills)), el('td', { class: 'n' }, fmt(d.total.runs)), el('td', { class: 'n' }, fmt(d.total.deaths)))))));
       } catch (_) {}
     }
+
+    // ---- hunt ranking ----
+    let rankingData = null;
+    function renderRanking() {
+      if (!rankingData) return;
+      const account = $('rank-account').value, sort = $('rank-sort').value;
+      const rows = rankingData.rows.filter((r) => String(r.account === null ? 'all' : r.account) === account)
+        .sort((a, b) => b[sort] - a[sort]);
+      if (!rows.length) { $('ranking').replaceChildren(el('div', { class: 'empty' }, `Ainda sem hunts de ${rankingData.minMinutes}+ min para comparar.`)); return; }
+      $('ranking').replaceChildren(el('table', null,
+        el('thead', null, el('tr', null, el('th', null, '#'), el('th', null, 'Hunt'),
+          ['Hunts', 'Horas', 'XP/h', 'Lucro/h', 'Kills/h', 'Mortes'].map((h) => el('th', { class: 'n' }, h)))),
+        el('tbody', null, rows.slice(0, 30).map((r, i) => el('tr', null, el('td', null, String(i + 1)), el('td', null, r.title),
+          el('td', { class: 'n' }, fmt(r.runs)), el('td', { class: 'n' }, r.hours.toFixed(1)), el('td', { class: 'n' }, fmt(r.xpPerHour)),
+          el('td', { class: 'n ' + (r.profitPerHour >= 0 ? 'pos' : 'neg') }, signed(r.profitPerHour)),
+          el('td', { class: 'n' }, fmt(r.killsPerHour)), el('td', { class: 'n' }, fmt(r.deaths)))))));
+    }
+    async function refreshRanking() {
+      try {
+        rankingData = await getJSON('/api/ranking');
+        const select = $('rank-account'), keep = select.value || 'all';
+        select.replaceChildren(el('option', { value: 'all' }, 'Todas as contas'),
+          ...lastAccounts.map((a) => el('option', { value: String(a.index) }, a.label)));
+        select.value = keep;
+        renderRanking();
+      } catch (_) {}
+    }
+    $('rank-account').addEventListener('change', renderRanking);
+    $('rank-sort').addEventListener('change', renderRanking);
 
     // ---- controls ----
     $('range').addEventListener('click', (ev) => {
       const b = ev.target.closest('button'); if (!b) return;
       rangeHours = Number(b.dataset.h);
+      $('csv-history').href = `/api/history.csv?hours=${rangeHours}`;
       for (const x of $('range').children) x.setAttribute('aria-pressed', String(x === b));
       try { localStorage.setItem('range', String(rangeHours)); } catch (_) {}
       refreshHistory();
@@ -507,10 +644,11 @@ public enum DashboardPage {
     let resizeTimer;
     addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderCharts, 150); });
 
-    refreshState().then(() => { refreshHistory(); refreshHunts(); });
+    refreshState().then(() => { refreshHistory(); refreshHunts(); refreshDaily(); refreshRanking(); });
     setInterval(refreshState, 3000);
     setInterval(refreshHistory, 60000);
     setInterval(refreshHunts, 30000);
+    setInterval(() => { refreshDaily(); refreshRanking(); }, 60000);
     </script>
     </body>
     </html>

@@ -143,8 +143,8 @@ public enum HuntAlerts {
             if total > 0 {
                 let pct = used / total
                 out["cap"] = ["used": Int(used), "total": Int(total)]
-                if pct >= 1 { alerts.append(["level": "bad", "text": "Mochila cheia: o loot novo se perde e a hunt termina."]) }
-                else if pct >= 0.9 { alerts.append(["level": "warn", "text": "Mochila a \(Int(pct * 100))% — venda ou esvazie antes que a hunt termine."]) }
+                if pct >= 1 { alerts.append(["kind": "cap", "level": "bad", "text": "Mochila cheia: o loot novo se perde e a hunt termina."]) }
+                else if pct >= 0.9 { alerts.append(["kind": "cap", "level": "warn", "text": "Mochila a \(Int(pct * 100))% — venda ou esvazie antes que a hunt termine."]) }
             }
         }
         let capacity = number(state["keyBagMax"])
@@ -155,8 +155,8 @@ public enum HuntAlerts {
                 keys["nextKeyMs"] = Int(number(clock["everyMs"]) - number(clock["tierMs"]).truncatingRemainder(dividingBy: number(clock["everyMs"])))
             }
             out["keys"] = keys
-            if used >= capacity { alerts.append(["level": "bad", "text": "Bolsa de chaves cheia: as próximas chaves se perdem. Gaste em Elites."]) }
-            else if used >= capacity - 1 { alerts.append(["level": "warn", "text": "Bolsa de chaves quase cheia (\(Int(used))/\(Int(capacity)))."]) }
+            if used >= capacity { alerts.append(["kind": "keys", "level": "bad", "text": "Bolsa de chaves cheia: as próximas chaves se perdem. Gaste em Elites."]) }
+            else if used >= capacity - 1 { alerts.append(["kind": "keys", "level": "warn", "text": "Bolsa de chaves quase cheia (\(Int(used))/\(Int(capacity)))."]) }
         }
         out["alerts"] = alerts
         return out

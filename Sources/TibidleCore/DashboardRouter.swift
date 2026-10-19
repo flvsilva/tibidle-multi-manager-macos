@@ -4,11 +4,13 @@ public struct HTTPResponse {
     public let status: Int
     public let contentType: String
     public let body: Data
+    public let filename: String?
 
-    public init(status: Int, contentType: String, body: Data) {
+    public init(status: Int, contentType: String, body: Data, filename: String? = nil) {
         self.status = status
         self.contentType = contentType
         self.body = body
+        self.filename = filename
     }
 
     public var reason: String {
@@ -19,6 +21,7 @@ public struct HTTPResponse {
     public func serialized() -> Data {
         var head = "HTTP/1.1 \(status) \(reason)\r\n"
         head += "Content-Type: \(contentType)\r\nContent-Length: \(body.count)\r\n"
+        if let filename { head += "Content-Disposition: attachment; filename=\"\(filename)\"\r\n" }
         head += "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n"
         return Data(head.utf8) + body
     }
@@ -40,6 +43,15 @@ public enum DashboardRouter {
         case "/api/hunts":
             let limit = min(max(Int(query["limit"] ?? "") ?? 50, 1), 500)
             return jsonResponse(store.huntsJSON(limit: limit))
+        case "/api/ranking":
+            return jsonResponse(store.rankingJSON())
+        case "/api/daily":
+            return jsonResponse(store.dailyJSON(days: min(max(Int(query["days"] ?? "") ?? 14, 1), 30)))
+        case "/api/hunts.csv":
+            return HTTPResponse(status: 200, contentType: "text/csv; charset=utf-8", body: store.huntsCSV(), filename: "tibidle-hunts.csv")
+        case "/api/history.csv":
+            let hours = min(max(Double(query["hours"] ?? "") ?? 24, 1), 24 * 30)
+            return HTTPResponse(status: 200, contentType: "text/csv; charset=utf-8", body: store.historyCSV(hours: hours), filename: "tibidle-historico.csv")
         default:
             return text(404, "Não encontrado")
         }
