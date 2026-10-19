@@ -202,11 +202,12 @@ final class MissionCollectorTests: XCTestCase {
         let messages = raw.map { try! JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
         XCTAssertEqual(messages.map { $0["type"] as? String }, ["welcome", "eventos_result", "frame"])
         let joined = raw.joined()
-        for forbidden in ["SECRET", "custoReroll", "custoPerdido", "login", "resgataveis", "itemId", "nextWeeklyResetAt", "serverWeek", "extra", "requestId", "premio", "Secret", "keyBag\"", "inicio"] {
+        for forbidden in ["SECRET", "custoReroll", "custoPerdido", "janela", "itemId", "nextWeeklyResetAt", "serverWeek", "extra", "requestId", "premio", "Secret", "keyBag\"", "inicio"] {
             XCTAssertFalse(joined.contains(forbidden), "\(forbidden) leaked")
         }
         let welcome = (messages[0]["data"] as! [String: Any])["eventos"] as! [String: Any]
         let slot = ((welcome["diarias"] as! [String: Any])["slots"] as! [Any])[0] as! [String: Any]
+        XCTAssertEqual((welcome["resgataveis"] as? [String: Any])?["total"] as? Int, 3)
         XCTAssertEqual(slot["targets"] as? [String], ["Dragon"])
         XCTAssertEqual(slot["progresso"] as? Int, 3)
         XCTAssertEqual(((welcome["semanais"] as! [String: Any])["concluidas"]) as? Int, 1)
@@ -370,6 +371,25 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual((object(store.stateJSON())["attention"] as! [[String: Any]]).count, items.count)
         clock += 2 * 3600
         XCTAssertFalse(store.attention().contains { $0.kind == "ended" }, "old endings stop being news")
+    }
+
+    func testInvasionAndLoginAlerts() {
+        let nowMs = Int(clock.timeIntervalSince1970 * 1000)
+        func welcome(joined: Bool, startsIn: Int) -> String {
+            #"{"type":"welcome","data":{"eventos":{"serverDay":"d","nextDailyResetAt":\#(nowMs + 36_000_000),"resgataveis":{"login":1,"diarias":0,"sequencia":0,"semanais":0,"total":1},"diarias":{"slots":[null,null]}},"invasao":{"date":"d","invasionNome":"Cerco","bossName":"Boss","inscrito":\#(joined),"encerrada":false,"janelas":[{"idx":1,"startAtMs":\#(nowMs + startsIn),"estado":"preparando"}]}}}"#
+        }
+        let store = makeStore()
+        store.ingest(account: 0, json: welcome(joined: false, startsIn: 4 * 3_600_000))
+        store.ingest(account: 1, json: welcome(joined: true, startsIn: 10 * 60_000))
+        store.ingest(account: 2, json: welcome(joined: true, startsIn: 4 * 3_600_000))
+        let items = store.attention()
+        XCTAssertTrue(items.contains { $0.kind == "invasion" && $0.account == 0 && $0.text.contains("ainda não entrou") })
+        XCTAssertTrue(items.contains { $0.kind == "invasion" && $0.account == 1 && $0.text.contains("começa em 10 min") })
+        XCTAssertFalse(items.contains { $0.kind == "invasion" && $0.account == 2 }, "joined and far away: nothing to say")
+        XCTAssertTrue(items.contains { $0.kind == "login" && $0.account == 0 })
+        let accounts = object(store.stateJSON())["accounts"] as! [[String: Any]]
+        XCTAssertEqual((accounts[0]["invasion"] as? [String: Any])?["joined"] as? Bool, false)
+        XCTAssertEqual(Set(items.map(\.key)).count, items.count)
     }
 
     func testCSVEscapesAndNeutralisesFormulas() {

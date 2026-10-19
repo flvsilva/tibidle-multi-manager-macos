@@ -346,6 +346,11 @@ public enum DashboardPage {
       } else {
         node.append(el('div', { class: 'empty' }, a.status === 'offline' ? 'Abra o jogo nesta aba do gerenciador.' : 'Sem hunt em andamento.'));
       }
+      const inv = a.invasion;
+      if (inv && !inv.finished && inv.next) {
+        const when = inv.next.live ? 'em andamento' : `começa às ${time(inv.next.startAt)} (${until(inv.next.startAt)})`;
+        node.append(el('div', { class: 'note' }, `${inv.name}${inv.boss ? ` · ${inv.boss}` : ''}: ${inv.joined ? 'inscrito' : 'não inscrito'} · ${when}`));
+      }
       if (a.supply) {
         for (const x of a.supply.alerts || []) node.append(el('div', { class: 'alert ' + x.level }, x.text));
         const k = a.supply.keys;

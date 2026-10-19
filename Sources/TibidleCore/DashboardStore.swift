@@ -83,6 +83,9 @@ public final class DashboardStore {
             entry["analyzer"] = nil
             entry["huntId"] = nil
             setMissions(&entry, data["eventos"])
+            entry["invasion"] = data["invasao"]
+        case "invasion_update":
+            if let invasion = data["invasao"] as? [String: Any] { entry["invasion"] = invasion }
         case "eventos_state", "eventos_result":
             setMissions(&entry, data["eventos"])
         case "hunt_started":
@@ -200,6 +203,7 @@ public final class DashboardStore {
             } else if let id = number(entry["huntId"]), let hunt = catalog.hunt(id: Int(id)) {
                 out["daily"] = ["missions": [], "currentHunt": ["id": hunt.id, "title": hunt.title]] as [String: Any]
             }
+            out["invasion"] = InvasionAdvisor.evaluate(entry["invasion"] as? [String: Any], now: now().timeIntervalSince1970 * 1000)
             out["missions"] = nil
             out["missionsLive"] = nil
             out["weekLive"] = nil

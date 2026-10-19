@@ -57,6 +57,22 @@ final class CollectorScriptTests: XCTestCase {
         XCTAssertEqual((resume["analyzer"] as! [String: Any])["xpPerHour"] as? Int, 50)
     }
 
+    func testForwardsInvasionScheduleOnly() {
+        let (context, posts) = makeContext()
+        context.evaluateScript("""
+            var ws = new WebSocket('wss://play.tibidle.com/ws');
+            ws.receive(JSON.stringify({ type: 'welcome', data: { worldToken: 'SECRET', meta: { rules: { store: [1] }, invasao: {
+              date: 'd', invasionNome: 'Cerco', bossName: 'Boss', inscrito: false, encerrada: false, premio: 'x',
+              janelas: [{ idx: 1, startAtMs: 5, estado: 'preparando', windowId: 'secret-id' }] } } } }));
+            """)
+        let welcome = posts()[0]["data"] as! [String: Any]
+        let invasion = welcome["invasao"] as! [String: Any]
+        XCTAssertEqual(invasion["inscrito"] as? Bool, false)
+        XCTAssertEqual(((invasion["janelas"] as! [[String: Any]])[0])["startAtMs"] as? Int, 5)
+        let text = String(data: try! JSONSerialization.data(withJSONObject: welcome), encoding: .utf8)!
+        for forbidden in ["SECRET", "windowId", "premio", "rules", "store"] { XCTAssertFalse(text.contains(forbidden), "\(forbidden) leaked") }
+    }
+
     func testThrottlesFramesAndReportsClose() {
         let (context, posts) = makeContext()
         context.evaluateScript("""

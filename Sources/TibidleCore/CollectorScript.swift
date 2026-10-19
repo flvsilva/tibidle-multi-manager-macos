@@ -67,7 +67,12 @@ public enum CollectorScript {
           tarefas: Array.isArray(e.semanais.tarefas) ? e.semanais.tarefas.slice(0, 8).map((t) => pick(t, WEEKLY)) : [],
         }) : undefined,
         sequencia: streak(e.sequencia),
+        resgataveis: pick(e.resgataveis, ['login', 'diarias', 'sequencia', 'semanais', 'total']),
       } : undefined;
+      // Invasion schedule only (when it opens, whether the player joined); no rewards or rankings.
+      const invasao = (v) => isObject(v) ? Object.assign(pick(v, ['date', 'invasionNome', 'bossName', 'inscrito', 'encerrada', 'proximaIdx']), {
+        janelas: Array.isArray(v.janelas) ? v.janelas.slice(0, 6).map((j) => pick(j, ['idx', 'startAtMs', 'estado', 'cancelada'])) : [],
+      }) : undefined;
       const progress = (p) => isObject(p) ? {
         dia: isObject(p.dia) ? {
           serverDay: p.dia.serverDay,
@@ -81,7 +86,9 @@ public enum CollectorScript {
       };
 
       const project = {
-        welcome: (d) => ({ account: pick(d.account, ACCOUNT), roster: pickList(d.roster, CHARACTER), eventos: eventos(d.eventos) }),
+        welcome: (d) => ({ account: pick(d.account, ACCOUNT), roster: pickList(d.roster, CHARACTER), eventos: eventos(d.eventos),
+                           invasao: invasao(isObject(d.meta) ? d.meta.invasao : undefined) }),
+        invasion_update: (d) => ({ invasao: invasao(d.invasao) }),
         eventos_state: (d) => ({ eventos: eventos(d) }),
         eventos_result: (d) => ({ eventos: eventos(d.state) }),
         resume: (d) => ({ huntId: d.huntId, state: state(d.state), analyzer: pick(d.analyzer, ANALYZER),

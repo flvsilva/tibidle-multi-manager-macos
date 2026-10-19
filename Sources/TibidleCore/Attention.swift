@@ -41,6 +41,22 @@ public enum Attention {
                 items.append(AttentionItem(key: "streak|\(i)|\(Int(number(daily?["dailyResetAt"])))", account: i, kind: "streak", level: "warn",
                                            text: "\(label): \(open) missão(ões) diária(s) sem resgatar e o dia fecha em breve — a sequência semanal corre risco.", notify: true))
             }
+            if let claimable = daily?["loginClaimable"] as? Int, claimable > 0 {
+                items.append(AttentionItem(key: "login|\(i)|\(Int(number(daily?["dailyResetAt"])))", account: i, kind: "login", level: "info",
+                                           text: "\(label): recompensa do calendário de login disponível — resgate no jogo.", notify: true))
+            }
+            if let invasion = entry["invasion"] as? [String: Any], invasion["finished"] as? Bool != true,
+               let next = invasion["next"] as? [String: Any], let start = next["startAt"] as? Double {
+                let minutes = Int(ceil((start - now) / 60000))
+                let name = invasion["name"] as? String ?? "Invasão"
+                if invasion["joined"] as? Bool != true, next["live"] as? Bool != true {
+                    items.append(AttentionItem(key: "invasion-join|\(i)|\(Int(start))", account: i, kind: "invasion", level: "warn",
+                                               text: "\(label): \(name) — inscrição aberta e você ainda não entrou (próxima janela \(clock(start))).", notify: true))
+                } else if invasion["joined"] as? Bool == true, minutes <= 15, minutes >= 0, next["live"] as? Bool != true {
+                    items.append(AttentionItem(key: "invasion-soon|\(i)|\(Int(start))", account: i, kind: "invasion", level: "info",
+                                               text: "\(label): \(name) começa em \(max(minutes, 1)) min.", notify: true))
+                }
+            }
             for alert in (entry["supply"] as? [String: Any])?["alerts"] as? [[String: String]] ?? [] {
                 guard let kind = alert["kind"], let text = alert["text"] else { continue }
                 items.append(AttentionItem(key: "\(kind)|\(i)|\(alert["level"] ?? "")", account: i, kind: kind,
@@ -66,6 +82,12 @@ public enum Attention {
         }
         let order = ["bad": 0, "warn": 1, "info": 2]
         return items.sorted { (order[$0.level] ?? 3, $0.account) < (order[$1.level] ?? 3, $1.account) }
+    }
+
+    private static func clock(_ ms: Double) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: Date(timeIntervalSince1970: ms / 1000))
     }
 
     private static func number(_ value: Any?) -> Double {

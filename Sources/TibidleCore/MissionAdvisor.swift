@@ -72,6 +72,9 @@ public enum MissionAdvisor {
                                resetAt: resetAt, now: now) {
             result["streak"] = streak
         }
+        if let claimable = (eventos["resgataveis"] as? [String: Any]).flatMap({ number($0["login"]) }), claimable > 0 {
+            result["loginClaimable"] = Int(claimable)
+        }
         let goals = weeklyGoals(eventos["semanais"] as? [String: Any], live: weekLive)
         if !goals.isEmpty { result["weeklyGoals"] = goals }
         if let current { result["currentHunt"] = ["id": current.id, "title": current.title] as [String: Any] }
