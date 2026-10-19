@@ -122,6 +122,11 @@ public enum DashboardPage {
     .tip .t { color: var(--muted); margin-bottom: 3px; }
     .tip .r { display: flex; align-items: center; gap: 6px; }
     .tip .r b { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 600; padding-left: 10px; }
+    .bestiary { margin-top: 10px; }
+    .bstages { position: relative; height: 8px; margin: 6px 0 4px; border-radius: 4px; background: var(--grid); overflow: hidden; }
+    .bstages .fill { height: 100%; background: linear-gradient(90deg, #a97a1c, #f0c23a); }
+    .bstages.done .fill { background: linear-gradient(90deg, #2f7a4f, #5fd18a); }
+    .bstages i { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--surface); }
     .skills-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; margin-top: 10px; padding: 8px 10px;
       font: inherit; font-size: 12px; color: var(--ink); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
     .skills-btn:hover { border-color: var(--axis); }
@@ -279,6 +284,26 @@ public enum DashboardPage {
 
     const ELEMENT = { COMBAT_PHYSICALDAMAGE: 'físico', COMBAT_FIREDAMAGE: 'fogo', COMBAT_ENERGYDAMAGE: 'energia', COMBAT_EARTHDAMAGE: 'terra',
       COMBAT_ICEDAMAGE: 'gelo', COMBAT_HOLYDAMAGE: 'sagrado', COMBAT_DEATHDAMAGE: 'morte' };
+    const BONUS = { maxHealth: 'Vida máxima', maxMana: 'Mana máxima', capacity: 'Capacidade', armor: 'Armadura', attack: 'Ataque', melee: 'Corpo a corpo',
+      distance: 'Distância', shielding: 'Escudo', magicLevel: 'Nível mágico', hpRegen: 'Regen. de vida', manaRegen: 'Regen. de mana' };
+    function bestiary(a) {
+      const b = a.bestiary;
+      if (!b || !b.stages || !b.stages.length) return null;
+      const final = num(b.stages[b.stages.length - 1].kills);
+      const bar = el('div', { class: 'bstages' + (b.done ? ' done' : '') }, el('div', { class: 'fill', style: { width: `${Math.min(100, 100 * num(b.kills) / final)}%` } }),
+        b.stages.slice(0, -1).map((st) => el('i', { style: { left: `${100 * num(st.kills) / final}%` } })));
+      let text;
+      if (b.done) text = `Completo · ${fmt(b.kills)} kills · bônus ${BONUS[b.bonus] || b.bonus} +${b.stages[b.stages.length - 1].value}`;
+      else {
+        const n = b.next;
+        text = `${fmt(b.kills)}/${fmt(final)} kills · marco ${Math.min(3, num(b.reached) + 1)}/${b.stages.length}`;
+        if (n) text += ` em ${fmt(n.remaining)} kills${n.etaMs ? ` (~${duration(n.etaMs)})` : ''}`;
+        if (b.etaMs) text += ` · completo em ~${duration(b.etaMs)}`;
+        else text += ' · estimativa de tempo após alguns minutos de hunt';
+      }
+      return el('div', { class: 'bestiary' }, el('div', { class: 'mhead' }, `Bestiário da hunt · ${BONUS[b.bonus] || b.bonus}`), bar, el('div', { class: 'madvice' }, text));
+    }
+
     let openSkills = null;
     function skillsButton(a) {
       const d = a.skills;
@@ -438,6 +463,8 @@ public enum DashboardPage {
         const when = inv.next.live ? 'em andamento' : `começa às ${time(inv.next.startAt)} (${until(inv.next.startAt)})`;
         node.append(el('div', { class: 'note' }, `${inv.name}${inv.boss ? ` · ${inv.boss}` : ''}: ${inv.joined ? 'inscrito' : 'não inscrito'} · ${when}`));
       }
+      const be = bestiary(a);
+      if (be) node.append(be);
       const sk = skillsButton(a);
       if (sk) node.append(sk);
       if (a.supply) {

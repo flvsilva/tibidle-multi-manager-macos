@@ -19,6 +19,7 @@ public final class DashboardStore {
     private var spells = SpellCatalog.empty
     private var creatures = CreatureCatalog()
     private var calibration = SkillAdvisor.Calibration.none
+    private var bestiaries = HuntBestiaryCatalog.empty
     /// Modeled damage accumulated during the current hunt, per assumed crowd size, plus the seconds covered.
     private var modeled: [Int: (damage: [Int: Double], seconds: Double, valid: Bool, last: Date?)] = [:]
     static let crowdSizes = [1, 2, 3, 4, 6, 8]
@@ -64,6 +65,7 @@ public final class DashboardStore {
     }
 
     public func setSpellCatalog(_ spells: SpellCatalog) { queue.sync { self.spells = spells } }
+    public func setBestiaries(_ catalog: HuntBestiaryCatalog) { queue.sync { bestiaries = catalog } }
     public func setCreatures(_ creatures: CreatureCatalog) { queue.sync { self.creatures = creatures } }
 
     /// Monsters killed on screen whose resistances are still unknown (the loader fetches them).
@@ -110,6 +112,7 @@ public final class DashboardStore {
             setMissions(&entry, data["eventos"])
             entry["invasion"] = data["invasao"]
             if let battle = data["battleConfigs"] { entry["battle"] = battle }
+            entry["huntBestiary"] = data["huntBestiary"]
         case "invasion_update":
             if let invasion = data["invasao"] as? [String: Any] { entry["invasion"] = invasion }
         case "eventos_state", "eventos_result":
@@ -125,6 +128,7 @@ public final class DashboardStore {
             modeled[account] = ([:], 0, true, nil)
         case "resume", "frame":
             if type == "resume", let battle = data["battleConfigs"] { entry["battle"] = battle }
+            if type == "resume", let counters = data["huntBestiary"] { entry["huntBestiary"] = counters }
             if type == "resume" { modeled[account] = nil }
             entry["status"] = "hunting"
             if let huntId = data["huntId"] { entry["huntId"] = huntId }
@@ -156,6 +160,12 @@ public final class DashboardStore {
             summary["characters"] = characterNames(entry)
             entry["lastSummary"] = summary
             recordCalibration(account: account, summary: summary, at: date)
+            // Until the next welcome refreshes the server's counters, fold the finished hunt in locally.
+            if let id = number(summary["huntId"]), var counters = entry["huntBestiary"] as? [String: Any],
+               let kills = number(summary["killsTotal"]) {
+                counters[String(Int(id))] = (number(counters[String(Int(id))]) ?? 0) + kills
+                entry["huntBestiary"] = counters
+            }
             entry["analyzer"] = nil
             if let text = jsonString(summary) {
                 let signature = ["huntId", "elapsedSec", "xp", "lootGold", "suppliesGold", "killsTotal", "balance"]
@@ -239,6 +249,10 @@ public final class DashboardStore {
                 out["skills"] = skills
             }
             out["battle"] = nil
+            if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let bestiary = bestiaryProgress(entry) {
+                out["bestiary"] = bestiary
+            }
+            out["huntBestiary"] = nil
             out["invasion"] = InvasionAdvisor.evaluate(entry["invasion"] as? [String: Any], now: now().timeIntervalSince1970 * 1000)
             out["missions"] = nil
             out["missionsLive"] = nil
@@ -554,5 +568,16 @@ extension DashboardStore {
                          sqlite3_column_double(row, 1)))
         }
         calibration = SkillAdvisor.calibrate(runs)
+    }
+}
+
+
+extension DashboardStore {
+    func bestiaryProgress(_ entry: [String: Any]) -> [String: Any]? {
+        guard let huntId = number(entry["huntId"]).map({ Int($0) }), let info = bestiaries.entries[huntId],
+              let counters = entry["huntBestiary"] as? [String: Any] else { return nil }
+        let analyzer = entry["analyzer"] as? [String: Any]
+        return BestiaryAdvisor.evaluate(info, counted: number(counters[String(huntId)]) ?? 0,
+                                        session: number(analyzer?["killsTotal"]) ?? 0, elapsedMs: number(analyzer?["elapsedMs"]) ?? 0)
     }
 }

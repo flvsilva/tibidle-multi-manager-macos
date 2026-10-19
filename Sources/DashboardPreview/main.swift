@@ -38,6 +38,7 @@ creatures.add(name: "Dragon", elements: [["type": "COMBAT_FIREDAMAGE", "percent"
 creatures.add(name: "Dragon Lord", elements: [["type": "COMBAT_FIREDAMAGE", "percent": 100], ["type": "COMBAT_ICEDAMAGE", "percent": -10]])
 creatures.add(name: "Dragon Hatchling", elements: [["type": "COMBAT_FIREDAMAGE", "percent": 100]])
 store.setCreatures(creatures)
+store.setBestiaries(HuntBestiaryCatalog(json: Data(#"[{"id":10,"title":"Dragon Lair","bestiary":{"bonus":"hpRegen","stages":[{"kills":1000,"value":1},{"kills":2000,"value":2},{"kills":4000,"value":3}]},"monsters":[]},{"id":13,"title":"Minotaur Hills","bestiary":{"bonus":"melee","stages":[{"kills":1000,"value":1},{"kills":2000,"value":2},{"kills":4000,"value":3}]},"monsters":[]}]"#.utf8))!)
 store.setHuntCatalog(HuntCatalog(json: Data("""
 {"hunts":[
  {"id":10,"title":"Dragon Lair","island":"Edron","monsters":["Dragon","Dragon Hatchling"]},
@@ -60,7 +61,7 @@ func missionJSON(_ a: Int) -> String {
 }
 let maps = [10, 10, 13]   // account 1 hunts Dragon Lair but its mission asks for Minotaurs
 for account in 0..<3 {
-    store.ingest(account: account, json: #"{"type":"welcome","data":{"account":{"name":"acc\#(account)","level":100},"eventos":\#(missionJSON(account))}}"#)
+    store.ingest(account: account, json: #"{"type":"welcome","data":{"account":{"name":"acc\#(account)","level":100},"huntBestiary":{"10":1450,"13":3900},"eventos":\#(missionJSON(account))}}"#)
     store.ingest(account: account, json: #"{"type":"hunt_started","data":{"huntId":\#(maps[account]),"state":{"party":\#(parties[account])}}}"#)
 }
 var hunt = maps

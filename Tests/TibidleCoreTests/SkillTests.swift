@@ -139,4 +139,56 @@ final class SkillTests: XCTestCase {
         store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":3,"reason":"manual","elapsedSec":660,"damageDealt":1,"killsTotal":1,"xp":"1","lootGold":0,"suppliesGold":0,"balance":0}}}"#)
         XCTAssertEqual(store.calibrationSamples(), 3)
     }
+
+    static let selectJSON = #"""
+    [{"id":10,"title":"Dragon Lair","levelMin":1,"bestiary":{"bonus":"hpRegen","stages":[{"kills":1000,"value":1},{"kills":2000,"value":2},{"kills":4000,"value":3}]},
+      "monsters":[{"name":"Dragon","elements":[{"type":"COMBAT_FIREDAMAGE","percent":100}]}]},
+     {"id":11,"title":"Sem bestiário","bestiary":{"bonus":"x","stages":[{"kills":0,"value":0}]},"monsters":[]}]
+    """#
+
+    func testHuntBestiaryCatalogParsesStagesAndFeedsCreatures() {
+        let catalog = HuntBestiaryCatalog(json: Data(Self.selectJSON.utf8))!
+        XCTAssertEqual(catalog.entries.keys.sorted(), [10], "maps whose milestones are all zero are skipped")
+        XCTAssertEqual(catalog.entries[10]?.stages.map(\.kills), [1000, 2000, 4000])
+        XCTAssertEqual(catalog.creatures.multiplier(creature: "Dragon", type: "COMBAT_FIREDAMAGE"), 0)
+        XCTAssertNil(HuntBestiaryCatalog(json: Data("[]".utf8)))
+    }
+
+    func testBestiaryEtaUsesTheCurrentKillRate() {
+        let entry = HuntBestiaryCatalog(json: Data(Self.selectJSON.utf8))!.entries[10]!
+        // 800 recorded + 300 this hunt in 30 min = 600 kills/h; next milestone at 2000 -> 900 kills left -> 1.5 h.
+        let result = BestiaryAdvisor.evaluate(entry, counted: 800, session: 300, elapsedMs: 30 * 60_000)
+        XCTAssertEqual(result["kills"] as? Double, 1100)
+        XCTAssertEqual(result["reached"] as? Int, 1)
+        XCTAssertEqual(result["done"] as? Bool, false)
+        XCTAssertEqual((result["next"] as! [String: Any])["kills"] as? Double, 2000)
+        XCTAssertEqual((result["next"] as! [String: Any])["etaMs"] as! Double, 1.5 * 3_600_000, accuracy: 1)
+        XCTAssertEqual(result["etaMs"] as! Double, 4.8333 * 3_600_000, accuracy: 5_000, "(4000-1100)/600 h")
+        // Too little data: no estimate, but the progress still shows.
+        let early = BestiaryAdvisor.evaluate(entry, counted: 800, session: 20, elapsedMs: 2 * 60_000)
+        XCTAssertNil(early["etaMs"])
+        XCTAssertEqual(early["kills"] as? Double, 820)
+        let finished = BestiaryAdvisor.evaluate(entry, counted: 4100, session: 0, elapsedMs: 0)
+        XCTAssertEqual(finished["done"] as? Bool, true)
+    }
+
+    func testStoreShowsBestiaryAndFoldsFinishedHunts() {
+        var clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let store = DashboardStore(databaseURL: nil, now: { clock })
+        store.setBestiaries(HuntBestiaryCatalog(json: Data(Self.selectJSON.utf8))!)
+        store.ingest(account: 0, json: #"{"type":"welcome","data":{"huntBestiary":{"10":900,"11":5}}}"#)
+        store.ingest(account: 0, json: #"{"type":"hunt_started","data":{"huntId":10,"state":{}}}"#)
+        for minute in 1...10 {
+            clock += 60
+            store.ingest(account: 0, json: #"{"type":"frame","data":{"analyzer":{"elapsedMs":\#(minute * 60_000),"killsTotal":\#(minute * 20),"kills":{"Dragon":\#(minute * 20)}}}}"#)
+        }
+        func bestiary() -> [String: Any]? {
+            ((try! JSONSerialization.jsonObject(with: store.stateJSON()) as! [String: Any])["accounts"] as! [[String: Any]])[0]["bestiary"] as? [String: Any]
+        }
+        XCTAssertEqual(bestiary()?["kills"] as? Double, 1100)
+        XCTAssertNotNil(bestiary()?["etaMs"])
+        store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":10,"reason":"manual","elapsedSec":600,"killsTotal":200,"xp":"1","lootGold":0,"suppliesGold":0,"balance":0}}}"#)
+        store.ingest(account: 0, json: #"{"type":"hunt_started","data":{"huntId":10,"state":{}}}"#)
+        XCTAssertEqual(bestiary()?["kills"] as? Double, 1100, "finished hunt is folded into the counter, not lost or doubled")
+    }
 }

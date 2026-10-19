@@ -62,6 +62,7 @@ A página atualiza sozinha e mostra:
 - a **previsão** de cada missão de monstro (kills/h dos alvos → quando conclui e se dá tempo antes do reset), a **sequência semanal**, as **metas semanais**, as chaves (com hora da próxima) e a mochila;
 - **totais por dia** (XP, lucro, kills, horas caçadas por conta) e um **ranking de hunts** por mapa (XP/h, lucro/h, kills/h, mortes), com filtro por conta; só entram hunts de 5 min ou mais;
 - detalhes de cada hunt encerrada (clique na linha): lucro/h e por kill, dano recebido e cura, causa da morte, monstros e drops;
+- o **bestiário da hunt** atual: kills registradas no mapa, os três marcos de bônus, o tempo estimado até o próximo marco e até completar (pela taxa de kills/h da hunt em andamento; as kills da hunt atual são somadas ao contador do servidor, então é uma estimativa);
 - **análise de skills** de cada personagem da party: dano estimado por skill contra os monstros da hunt (resistências do bestiário público do jogo), avisos de elemento que os alvos resistem e sugestões de troca ou adição com o ganho estimado e o custo de mana (veja abaixo);
 - exportação em **CSV** do histórico de hunts e das amostras por minuto.
 

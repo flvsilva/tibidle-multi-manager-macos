@@ -56,6 +56,13 @@ public enum CollectorScript {
         out.kit = Array.isArray(m.kit) ? m.kit.slice(0, 24).map((k) => pick(k, ['name', 'mana', 'cooldownMs'])) : [];
         return out;
       };
+      // Per-map kill counters (numbers only): { "<huntId>": kills }.
+      const counters = (m) => {
+        if (!isObject(m) || !isObject(m.huntBestiary)) return undefined;
+        const out = {};
+        for (const [k, v] of Object.entries(m.huntBestiary).slice(0, 300)) if (typeof v === 'number') out[k] = v;
+        return out;
+      };
       const BATTLE = (c) => {
         if (!isObject(c)) return undefined;
         const out = {};
@@ -119,11 +126,11 @@ public enum CollectorScript {
 
       const project = {
         welcome: (d) => ({ account: pick(d.account, ACCOUNT), roster: pickList(d.roster, CHARACTER), eventos: eventos(d.eventos),
-                           invasao: invasao(isObject(d.meta) ? d.meta.invasao : undefined), battleConfigs: BATTLE(d.battleConfigs) }),
+                           invasao: invasao(isObject(d.meta) ? d.meta.invasao : undefined), battleConfigs: BATTLE(d.battleConfigs), huntBestiary: counters(d.meta) }),
         invasion_update: (d) => ({ invasao: invasao(d.invasao) }),
         eventos_state: (d) => ({ eventos: eventos(d) }),
         eventos_result: (d) => ({ eventos: eventos(d.state) }),
-        resume: (d) => ({ huntId: d.huntId, battleConfigs: BATTLE(d.battleConfigs), state: state(d.state), analyzer: pick(d.analyzer, ANALYZER),
+        resume: (d) => ({ huntId: d.huntId, battleConfigs: BATTLE(d.battleConfigs), huntBestiary: counters(d.meta), state: state(d.state), analyzer: pick(d.analyzer, ANALYZER),
                           offline: pick(d.offline, OFFLINE), training: d.training === true }),
         hunt_started: (d) => ({ huntId: d.huntId, state: state(d.state), training: d.training === true }),
         frame: (d) => ({ state: state(d.state), analyzer: pick(d.analyzer, ANALYZER), eventosProgresso: progress(d.eventosProgresso) }),
