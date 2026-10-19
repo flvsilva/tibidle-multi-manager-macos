@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: MainWindowController?
     private var server: DashboardServer?
     private var catalogLoader: HuntCatalogLoader?
+    private var skillLoader: SkillDataLoader?
     private var notifier: Notifier?
     private var notifyItem: NSMenuItem?
 
@@ -15,6 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let loader = HuntCatalogLoader(cacheURL: root.appendingPathComponent("hunts-catalog.json"), store: dashboard)
         loader.start()
         catalogLoader = loader
+        let skills = SkillDataLoader(directory: root, store: dashboard)
+        skills.start()
+        skillLoader = skills
         let controller = MainWindowController(store: SettingsStore(root: root), dashboard: dashboard)
         self.controller = controller
         let server = DashboardServer(store: dashboard)
@@ -54,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller?.save()
         server?.stop()
         catalogLoader?.stop()
+        skillLoader?.stop()
     }
 
     @objc private func selectPosition(_ sender: NSMenuItem) { controller?.selectPosition(sender.tag) }

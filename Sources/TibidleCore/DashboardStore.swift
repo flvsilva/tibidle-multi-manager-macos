@@ -16,6 +16,12 @@ public final class DashboardStore {
     private var lastSample: [Int: Date] = [:]
     private var names: [String]
     private var catalog = HuntCatalog.empty
+    private var spells = SpellCatalog.empty
+    private var creatures = CreatureCatalog()
+    private var calibration = SkillAdvisor.Calibration.none
+    /// Modeled damage accumulated during the current hunt, per assumed crowd size, plus the seconds covered.
+    private var modeled: [Int: (damage: [Int: Double], seconds: Double, valid: Bool, last: Date?)] = [:]
+    static let crowdSizes = [1, 2, 3, 4, 6, 8]
 
     public init(databaseURL: URL?, now: @escaping () -> Date = Date.init) {
         self.now = now
@@ -35,8 +41,11 @@ public final class DashboardStore {
             -- hunt_id is the *map* id, so a run is identified by its own numbers, not by the map.
             CREATE TABLE IF NOT EXISTS runs (account INTEGER, ended_at REAL, signature TEXT, summary TEXT,
                 UNIQUE(account, signature));
+            -- Modeled vs real damage per hunt, used to calibrate the skill advisor.
+            CREATE TABLE IF NOT EXISTS calibration (account INTEGER, ended_at REAL, predicted TEXT, actual REAL);
             """)
         migrateLegacyHunts()
+        reloadCalibration()
         run("DELETE FROM samples WHERE ts < ?", [.double(self.now().timeIntervalSince1970 - Self.retention)])
     }
 
@@ -52,6 +61,22 @@ public final class DashboardStore {
                 SELECT account, ended_at, 'legacy-' || hunt_id, summary FROM hunts;
             DROP TABLE hunts;
             """)
+    }
+
+    public func setSpellCatalog(_ spells: SpellCatalog) { queue.sync { self.spells = spells } }
+    public func setCreatures(_ creatures: CreatureCatalog) { queue.sync { self.creatures = creatures } }
+
+    /// Monsters killed on screen whose resistances are still unknown (the loader fetches them).
+    public func missingCreatures() -> [String] {
+        queue.sync {
+            var names = Set<String>()
+            for entry in live where entry["status"] as? String == "hunting" {
+                for key in ((entry["analyzer"] as? [String: Any])?["kills"] as? [String: Any])?.keys.map({ $0 }) ?? [] where !creatures.knows(key) {
+                    names.insert(key)
+                }
+            }
+            return names.sorted()
+        }
     }
 
     public func setHuntCatalog(_ catalog: HuntCatalog) {
@@ -84,6 +109,7 @@ public final class DashboardStore {
             entry["huntId"] = nil
             setMissions(&entry, data["eventos"])
             entry["invasion"] = data["invasao"]
+            if let battle = data["battleConfigs"] { entry["battle"] = battle }
         case "invasion_update":
             if let invasion = data["invasao"] as? [String: Any] { entry["invasion"] = invasion }
         case "eventos_state", "eventos_result":
@@ -96,7 +122,10 @@ public final class DashboardStore {
             entry["analyzer"] = nil
             entry["offline"] = nil
             entry["huntStartedAt"] = date.timeIntervalSince1970 * 1000
+            modeled[account] = ([:], 0, true, nil)
         case "resume", "frame":
+            if type == "resume", let battle = data["battleConfigs"] { entry["battle"] = battle }
+            if type == "resume" { modeled[account] = nil }
             entry["status"] = "hunting"
             if let huntId = data["huntId"] { entry["huntId"] = huntId }
             if let state = data["state"] { entry["state"] = state }
@@ -126,6 +155,7 @@ public final class DashboardStore {
             summary["endedAt"] = date.timeIntervalSince1970 * 1000
             summary["characters"] = characterNames(entry)
             entry["lastSummary"] = summary
+            recordCalibration(account: account, summary: summary, at: date)
             entry["analyzer"] = nil
             if let text = jsonString(summary) {
                 let signature = ["huntId", "elapsedSec", "xp", "lootGold", "suppliesGold", "killsTotal", "balance"]
@@ -156,6 +186,7 @@ public final class DashboardStore {
     private func sample(account: Int, huntId: Any?, analyzer: [String: Any], at date: Date) {
         if let last = lastSample[account], date.timeIntervalSince(last) < Self.sampleInterval { return }
         lastSample[account] = date
+        accumulateModel(account: account, analyzer: analyzer, at: date)
         run("""
             INSERT INTO samples (account, ts, hunt_id, elapsed_ms, xp, xp_per_hour, loot_gold, supplies_gold, kills_total)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -203,6 +234,11 @@ public final class DashboardStore {
             } else if let id = number(entry["huntId"]), let hunt = catalog.hunt(id: Int(id)) {
                 out["daily"] = ["missions": [], "currentHunt": ["id": hunt.id, "title": hunt.title]] as [String: Any]
             }
+            if entry["status"] as? String == "hunting", entry["training"] as? Bool != true,
+               let skills = skillAnalysis(entry) {
+                out["skills"] = skills
+            }
+            out["battle"] = nil
             out["invasion"] = InvasionAdvisor.evaluate(entry["invasion"] as? [String: Any], now: now().timeIntervalSince1970 * 1000)
             out["missions"] = nil
             out["missionsLive"] = nil
@@ -443,5 +479,80 @@ extension DashboardStore {
             }
             return csv(["horario", "conta", "hunt_id", "tempo_ms", "xp", "xp_h", "loot", "supplies", "kills"], rows)
         }
+    }
+}
+
+
+// MARK: Skill advisor integration
+
+extension DashboardStore {
+    static let calibrationWindow = 60
+
+    /// Party members as the model sees them; nil entries without a usable spell kit are skipped.
+    func skillMembers(_ entry: [String: Any]) -> [SkillAdvisor.Member] {
+        guard let party = (entry["state"] as? [String: Any])?["party"] as? [[String: Any]] else { return [] }
+        let battle = entry["battle"] as? [String: Any]
+        return party.compactMap { member -> SkillAdvisor.Member? in
+            guard let name = member["name"] as? String, let vocation = member["vocation"] as? String else { return nil }
+            let base = SkillAdvisor.baseVocation(vocation)
+            let config = battle?.first { $0.key.lowercased() == base }?.value as? [String: Any]
+            let configured = (config?["skills"] as? [Any])?.compactMap { $0 as? String } ?? []
+            let equipped = ((member["kit"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String }
+            let kit = (configured.isEmpty ? equipped : configured).filter { spells.spell(named: $0) != nil }
+            guard !kit.isEmpty else { return nil }
+            let levels = member["skillLevels"] as? [String: Any] ?? [:]
+            var minCreatures: [String: Int] = [:]
+            for (key, value) in config?["minCreatures"] as? [String: Any] ?? [:] { minCreatures[key] = Int(number(value) ?? 1) }
+            return SkillAdvisor.Member(
+                name: name, vocation: vocation, level: Int(number(member["level"]) ?? 1),
+                melee: number(levels["melee"]) ?? 10, distance: number(levels["distance"]) ?? 10, magic: number(levels["magic"]) ?? 0,
+                attack: number(member["weaponAttack"]), kit: kit, minCreatures: minCreatures)
+        }
+    }
+
+    func skillAnalysis(_ entry: [String: Any]) -> [String: Any]? {
+        guard !spells.spells.isEmpty else { return nil }
+        let members = skillMembers(entry)
+        let kills = ((entry["analyzer"] as? [String: Any])?["kills"] as? [String: Any])?.compactMapValues { number($0) } ?? [:]
+        guard !members.isEmpty, kills.values.reduce(0, +) >= 20 else { return nil }
+        return SkillAdvisor.analyze(members: members, spells: spells, creatures: creatures, kills: kills, calibration: calibration)
+    }
+
+    func accumulateModel(account: Int, analyzer: [String: Any], at date: Date) {
+        guard var state = modeled[account], state.valid else { return }
+        let entry = live[account]
+        let kills = (analyzer["kills"] as? [String: Any])?.compactMapValues { number($0) } ?? [:]
+        let members = skillMembers(entry)
+        defer { state.last = date; modeled[account] = state }
+        guard let last = state.last, !members.isEmpty, !kills.isEmpty else { return }
+        let dt = min(date.timeIntervalSince(last), 120)
+        let perCrowd = SkillAdvisor.modeledDPS(members: members, spells: spells, creatures: creatures, kills: kills, crowds: Self.crowdSizes)
+        for (crowd, dps) in perCrowd { state.damage[crowd, default: 0] += dps * dt }
+        state.seconds += dt
+    }
+
+    func recordCalibration(account: Int, summary: [String: Any], at date: Date) {
+        defer { modeled[account] = nil }
+        guard let state = modeled[account], state.valid, state.seconds >= 300,
+              let elapsed = number(summary["elapsedSec"]), elapsed > 0, state.seconds >= elapsed * 0.7,
+              let actual = number(summary["damageDealt"]), actual > 0 else { return }
+        let predicted = state.damage.mapValues { $0 / state.seconds }
+        guard let text = jsonString(Dictionary(uniqueKeysWithValues: predicted.map { (String($0.key), $0.value) })) else { return }
+        run("INSERT INTO calibration (account, ended_at, predicted, actual) VALUES (?, ?, ?, ?)",
+            [.int(account), .double(date.timeIntervalSince1970), .text(text), .double(actual / elapsed)])
+        reloadCalibration()
+    }
+
+    func calibrationSamples() -> Int { queue.sync { calibration.samples } }
+
+    func reloadCalibration() {
+        var runs: [(predicted: [Int: Double], actual: Double)] = []
+        query("SELECT predicted, actual FROM calibration ORDER BY ended_at DESC LIMIT \(Self.calibrationWindow)", []) { row in
+            guard let text = sqlite3_column_text(row, 0),
+                  let object = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)) as? [String: Double] else { return }
+            runs.append((Dictionary(uniqueKeysWithValues: object.compactMap { key, value in Int(key).map { ($0, value) } }),
+                         sqlite3_column_double(row, 1)))
+        }
+        calibration = SkillAdvisor.calibrate(runs)
     }
 }

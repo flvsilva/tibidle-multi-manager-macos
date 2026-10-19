@@ -122,6 +122,10 @@ public enum DashboardPage {
     .tip .t { color: var(--muted); margin-bottom: 3px; }
     .tip .r { display: flex; align-items: center; gap: 6px; }
     .tip .r b { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 600; padding-left: 10px; }
+    .skills { margin-top: 8px; }
+    .skills table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+    .skills td, .skills th { text-align: left; padding: 2px 6px 2px 0; font-weight: 400; font-variant-numeric: tabular-nums; }
+    .skills .warn { color: var(--warn-text); } .skills .good { color: var(--good); }
     details { margin-top: 10px; font-size: 12px; color: var(--ink-2); }
     summary { cursor: pointer; }
 
@@ -246,6 +250,33 @@ public enum DashboardPage {
       return h ? `${h}h ${String(m % 60).padStart(2, '0')}min` : `${m}min`;
     };
 
+    const ELEMENT = { COMBAT_PHYSICALDAMAGE: 'físico', COMBAT_FIREDAMAGE: 'fogo', COMBAT_ENERGYDAMAGE: 'energia', COMBAT_EARTHDAMAGE: 'terra',
+      COMBAT_ICEDAMAGE: 'gelo', COMBAT_HOLYDAMAGE: 'sagrado', COMBAT_DEATHDAMAGE: 'morte' };
+    function skills(a) {
+      const d = a.skills;
+      if (!d || !d.members || !d.members.length) return null;
+      const total = d.members.reduce((sum, m) => sum + num(m.dps), 0);
+      const box = el('details', { class: 'skills' }, el('summary', null,
+        `Skills · ~${fmt(total)} dano/s estimado${d.calibrated ? ` (calibrado com ${d.samples} hunts)` : ' (sem calibração ainda)'}`));
+      for (const m of d.members) {
+        const rows = (m.skills || []).map((s) => el('tr', null,
+          el('td', null, s.name), el('td', null, ELEMENT[s.element] || s.element),
+          el('td', { class: s.warning ? 'warn' : s.note ? 'good' : '' }, `${Math.round(num(s.multiplier) * 100)}%`),
+          el('td', null, `${fmt(s.dps)}/s`), el('td', null, `${fmt(s.mana)} mana · ${s.cooldown}s`)));
+        box.append(el('div', { class: 'mhead' }, `${m.name} · ~${fmt(m.dps)}/s · ${fmt(m.manaPerMinute)} mana/min`),
+          el('table', null, el('tr', null, el('th', null, 'Skill'), el('th', null, 'Elemento'), el('th', null, 'Dano nos alvos'),
+            el('th', null, 'Contribuição'), el('th', null, 'Custo')), rows));
+        for (const s of m.skills || []) if (s.warning) box.append(el('div', { class: 'madvice warn' }, `${s.name}: ${s.warning}`));
+        for (const sg of m.suggestions || []) {
+          const what = sg.replace ? `trocar ${sg.replace} por ${sg.add}` : `adicionar ${sg.add}`;
+          const mana = num(sg.manaPerMinuteDelta);
+          box.append(el('div', { class: 'madvice good' }, `Sugestão: ${what} (${sg.fromZero ? 'hoje causa 0 de dano' : `+${Math.round(num(sg.gain) * 100)}% dano estimado`}, ${mana >= 0 ? '+' : ''}${fmt(mana)} mana/min).`));
+        }
+      }
+      box.append(el('div', { class: 'madvice' }, `Estimativa por modelo: pull médio de ${d.crowd} criaturas${d.coverage < 1 ? `, resistências conhecidas para ${Math.round(num(d.coverage) * 100)}% dos kills` : ''}. É um guia, não uma garantia.`));
+      return box;
+    }
+
     function missions(a) {
       const d = a.daily;
       if (!d || !d.missions || !d.missions.length) return null;
@@ -351,6 +382,8 @@ public enum DashboardPage {
         const when = inv.next.live ? 'em andamento' : `começa às ${time(inv.next.startAt)} (${until(inv.next.startAt)})`;
         node.append(el('div', { class: 'note' }, `${inv.name}${inv.boss ? ` · ${inv.boss}` : ''}: ${inv.joined ? 'inscrito' : 'não inscrito'} · ${when}`));
       }
+      const sk = skills(a);
+      if (sk) node.append(sk);
       if (a.supply) {
         for (const x of a.supply.alerts || []) node.append(el('div', { class: 'alert ' + x.level }, x.text));
         const k = a.supply.keys;

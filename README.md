@@ -62,7 +62,11 @@ A página atualiza sozinha e mostra:
 - a **previsão** de cada missão de monstro (kills/h dos alvos → quando conclui e se dá tempo antes do reset), a **sequência semanal**, as **metas semanais**, as chaves (com hora da próxima) e a mochila;
 - **totais por dia** (XP, lucro, kills, horas caçadas por conta) e um **ranking de hunts** por mapa (XP/h, lucro/h, kills/h, mortes), com filtro por conta; só entram hunts de 5 min ou mais;
 - detalhes de cada hunt encerrada (clique na linha): lucro/h e por kill, dano recebido e cura, causa da morte, monstros e drops;
+- **análise de skills** de cada personagem da party: dano estimado por skill contra os monstros da hunt (resistências do bestiário público do jogo), avisos de elemento que os alvos resistem e sugestões de troca ou adição com o ganho estimado e o custo de mana (veja abaixo);
 - exportação em **CSV** do histórico de hunts e das amostras por minuto.
+
+**Análise de skills.** O app combina três dados: as skills equipadas e seus níveis (lidos do jogo, só números e nomes de skills), as fórmulas e elementos de cada magia (`https://play.tibidle.com/spells`) e as resistências de cada monstro abatido (`/bestiary/creature`, baixadas sob demanda e guardadas em `creatures-cache.json`). Com isso ele simula a rotação da party (a primeira skill da prioridade que está pronta e atende ao mínimo de criaturas) e estima o dano por segundo. O dano exibido é uma **estimativa**: o app não conhece as regras internas do servidor.
+Ele **aprende com as suas hunts**: ao fim de cada hunt iniciada com o app aberto, compara o dano previsto com o dano real informado pelo jogo (tabela `calibration` em `dashboard.sqlite`). Com 3 hunts ou mais ele escolhe o tamanho médio de pull que melhor explica o seu dano real e aplica um fator de correção; o cartão passa a mostrar "calibrado com N hunts". Limitações: não há dano por skill (só o total da party), o ataque da arma pode não vir nos dados (assume 40) e itens, buffs e resistências extras do jogo não entram no modelo.
 
 **Notificações.** O app avisa pelo macOS quando algo novo entra no painel de atenção (missão pronta, sequência em risco, login a resgatar, invasão, mochila/chaves cheias, hunt que acabou mal). Liga e desliga em **Dashboard → Notificar eventos importantes**. É local: nada sai do Mac. Só funciona no `.app` instalado, não no `swift run`.
 

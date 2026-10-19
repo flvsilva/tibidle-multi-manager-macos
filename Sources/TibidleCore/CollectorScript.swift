@@ -37,9 +37,41 @@ public enum CollectorScript {
         return out;
       };
       const pickList = (list, keys) => Array.isArray(list) ? list.slice(0, 4).map((o) => pick(o, keys)) : undefined;
+      const num = (v) => typeof v === 'number' && isFinite(v) ? v : undefined;
+      // Combat numbers only (skill levels, equipped spell names/cooldowns, weapon attack): no items or ids.
+      const weaponAttack = (eq) => {
+        const w = isObject(eq) ? eq.weapon : undefined;
+        if (!isObject(w)) return undefined;
+        return num(isObject(w.attrs) ? w.attrs.attack : undefined) ?? num(w.attack);
+      };
+      const member = (m) => {
+        if (!isObject(m)) return undefined;
+        const out = pick(m, MEMBER);
+        const sk = isObject(m.skills) ? m.skills : {};
+        out.skillLevels = {
+          melee: num(isObject(sk.melee) ? sk.melee.value : undefined), distance: num(isObject(sk.distance) ? sk.distance.value : undefined),
+          magic: num(isObject(sk.magic) ? sk.magic.value : undefined),
+        };
+        out.weaponAttack = weaponAttack(m.equipment);
+        out.kit = Array.isArray(m.kit) ? m.kit.slice(0, 24).map((k) => pick(k, ['name', 'mana', 'cooldownMs'])) : [];
+        return out;
+      };
+      const BATTLE = (c) => {
+        if (!isObject(c)) return undefined;
+        const out = {};
+        for (const voc of Object.keys(c).slice(0, 6)) {
+          const b = c[voc];
+          if (!isObject(b)) continue;
+          out[voc] = {
+            skills: Array.isArray(b.skills) ? b.skills.slice(0, 12).map((x) => typeof x === 'string' ? x : null) : [],
+            minCreatures: isObject(b.minCreatures) ? Object.fromEntries(Object.entries(b.minCreatures).filter(([, v]) => typeof v === 'number').slice(0, 16)) : {},
+          };
+        }
+        return out;
+      };
       const state = (s) => isObject(s) ? {
         character: pick(s.character, CHARACTER),
-        party: pickList(s.party, MEMBER),
+        party: Array.isArray(s.party) ? s.party.slice(0, 4).map(member) : undefined,
         balance: typeof s.balance === 'number' ? s.balance : undefined,
         cap: pick(s.cap, ['used', 'total']),
         tower: pick(s.tower, ['floor', 'cleared', 'mode']),
@@ -87,11 +119,11 @@ public enum CollectorScript {
 
       const project = {
         welcome: (d) => ({ account: pick(d.account, ACCOUNT), roster: pickList(d.roster, CHARACTER), eventos: eventos(d.eventos),
-                           invasao: invasao(isObject(d.meta) ? d.meta.invasao : undefined) }),
+                           invasao: invasao(isObject(d.meta) ? d.meta.invasao : undefined), battleConfigs: BATTLE(d.battleConfigs) }),
         invasion_update: (d) => ({ invasao: invasao(d.invasao) }),
         eventos_state: (d) => ({ eventos: eventos(d) }),
         eventos_result: (d) => ({ eventos: eventos(d.state) }),
-        resume: (d) => ({ huntId: d.huntId, state: state(d.state), analyzer: pick(d.analyzer, ANALYZER),
+        resume: (d) => ({ huntId: d.huntId, battleConfigs: BATTLE(d.battleConfigs), state: state(d.state), analyzer: pick(d.analyzer, ANALYZER),
                           offline: pick(d.offline, OFFLINE), training: d.training === true }),
         hunt_started: (d) => ({ huntId: d.huntId, state: state(d.state), training: d.training === true }),
         frame: (d) => ({ state: state(d.state), analyzer: pick(d.analyzer, ANALYZER), eventosProgresso: progress(d.eventosProgresso) }),
