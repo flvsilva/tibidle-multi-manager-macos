@@ -60,7 +60,7 @@ final class MissionAdvisorTests: XCTestCase {
     func testStates() {
         XCTAssertEqual(state(eventos())["state"] as? String, "on_track")
         XCTAssertEqual(state(eventos(), huntId: 12)["state"] as? String, "off_track")
-        XCTAssertEqual(state(eventos(), huntId: 1)["state"] as? String, "unknown")      // tower / not in catalog
+        XCTAssertEqual(state(eventos(), huntId: 1)["state"] as? String, "no_count")      // tower / elite / boss: not in the regular list
         XCTAssertEqual(state(eventos(), hunting: false)["state"] as? String, "pending")
         XCTAssertEqual(state(eventos(), training: true)["state"] as? String, "pending")
         XCTAssertEqual(state(eventos(progress: 100))["state"] as? String, "ready")
@@ -187,19 +187,22 @@ final class MissionCollectorTests: XCTestCase {
             var task = { id: 't1', title: 'Caçada: Dragon', kind: 'monster', quantity: 50, targets: ['Dragon'], progresso: 3,
               resgatado: false, rewards: [{ kind: 'item', itemId: 99, name: 'Gem', amount: 2 }, { kind: 'coins', amount: 5 }] };
             var ev = { serverDay: '2026-10-18', serverWeek: 'W', nextDailyResetAt: 1, nextWeeklyResetAt: 2,
-              login: { janela: { dias: [1, 2] }, custoPerdido: 7 }, sequencia: { dias: [] },
-              diarias: { slots: [task, null], custoReroll: 99 }, semanais: { tarefas: [{ id: 'monstros' }], concluidas: 1, necessarias: 5 },
+              login: { janela: { dias: [1, 2] }, custoPerdido: 7 }, sequencia: { diaAtual: 3, fechados: 2, terminaEm: 4, custoRecuperar: 20, inicio: 'X',
+                dias: [{ day: 1, estado: 'resgatado', premio: { itemId: 5 } }, { day: 2, estado: 'recuperar', data: 'D' }] },
+              diarias: { slots: [task, null], custoReroll: 99 }, semanais: { tarefas: [{ id: 'monstros', progresso: 7, meta: 50, extra2: 1 }], concluidas: 1, necessarias: 5 },
               resgataveis: { total: 3 } };
+            var st = { keyBagUsed: 2, keyBagMax: 5, keyBag: { 'Secret Key': 2 }, keyClock: { item: 'Secret Key', tierMs: 5, everyMs: 9, count: 1 },
+              cap: { used: 1, total: 2 } };
             ws.receive(JSON.stringify({ type: 'welcome', data: { worldToken: 'SECRET', eventos: ev } }));
             ws.receive(JSON.stringify({ type: 'eventos_result', data: { requestId: 'r1', state: ev } }));
-            ws.receive(JSON.stringify({ type: 'frame', data: { analyzer: {}, state: {}, events: [],
-              eventosProgresso: { dia: { serverDay: '2026-10-18', slots: [{ taskId: 't1', exibido: 9, extra: 1 }] }, semana: { monstros: 4 } } } }));
+            ws.receive(JSON.stringify({ type: 'frame', data: { analyzer: {}, state: st, events: [],
+              eventosProgresso: { dia: { serverDay: '2026-10-18', slots: [{ taskId: 't1', exibido: 9, extra: 1 }] }, semana: { serverWeek: 'W', monstros: 4 } } } }));
             """)
         let raw = context.evaluateScript("posts")!.toArray() as! [String]
         let messages = raw.map { try! JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
         XCTAssertEqual(messages.map { $0["type"] as? String }, ["welcome", "eventos_result", "frame"])
         let joined = raw.joined()
-        for forbidden in ["SECRET", "custoReroll", "custoPerdido", "login", "sequencia", "resgataveis", "itemId", "nextWeeklyResetAt", "serverWeek", "extra", "requestId"] {
+        for forbidden in ["SECRET", "custoReroll", "custoPerdido", "login", "resgataveis", "itemId", "nextWeeklyResetAt", "serverWeek", "extra", "requestId", "premio", "Secret", "keyBag\"", "inicio"] {
             XCTAssertFalse(joined.contains(forbidden), "\(forbidden) leaked")
         }
         let welcome = (messages[0]["data"] as! [String: Any])["eventos"] as! [String: Any]
@@ -210,5 +213,86 @@ final class MissionCollectorTests: XCTestCase {
         let frame = messages[2]["data"] as! [String: Any]
         let live = ((frame["eventosProgresso"] as! [String: Any])["dia"] as! [String: Any])["slots"] as! [[String: Any]]
         XCTAssertEqual(live[0]["exibido"] as? Int, 9)
+        let streak = welcome["sequencia"] as! [String: Any]
+        XCTAssertEqual(streak["diaAtual"] as? Int, 3)
+        XCTAssertEqual((streak["dias"] as! [[String: Any]])[1]["estado"] as? String, "recuperar")
+        let goal = ((welcome["semanais"] as! [String: Any])["tarefas"] as! [[String: Any]])[0]
+        XCTAssertEqual(goal["meta"] as? Int, 50)
+        let state = frame["state"] as! [String: Any]
+        XCTAssertEqual(state["keyBagMax"] as? Int, 5)
+        XCTAssertEqual((state["keyClock"] as! [String: Any])["everyMs"] as? Int, 9)
+        XCTAssertEqual(((frame["eventosProgresso"] as! [String: Any])["semana"] as! [String: Any])["monstros"] as? Int, 4)
+    }
+}
+
+
+final class MissionInsightsTests: XCTestCase {
+    private let catalog = HuntCatalog(json: Data(catalogJSON.utf8))!
+    private let now = 1_800_000_000_000.0
+
+    private func evaluate(_ e: [String: Any], huntId: Int? = 10, analyzer: [String: Any]? = nil, weekLive: Double? = nil) -> [String: Any] {
+        MissionAdvisor.evaluate(eventos: e, live: nil, hunting: true, training: false, currentHuntId: huntId,
+                                catalog: catalog, analyzer: analyzer, weekLive: weekLive, now: now)
+    }
+
+    private func mission(_ r: [String: Any]) -> [String: Any] { (r["missions"] as! [[String: Any]])[0] }
+
+    func testForecastSaysWhetherTheMissionEndsBeforeTheReset() {
+        var e = eventos(progress: 20)
+        // 120 Dragons in 1h → 120/h; 80 left → 40 min.
+        let analyzer: [String: Any] = ["elapsedMs": 3_600_000, "kills": ["Dragon": 100, "Dragon Hatchling": 50]]
+        e["nextDailyResetAt"] = now + 3_600_000
+        var eta = mission(evaluate(e, analyzer: analyzer))["eta"] as! [String: Any]
+        XCTAssertEqual(eta["perHour"] as? Int, 100)
+        XCTAssertEqual(eta["etaMs"] as? Int, 2_880_000)
+        XCTAssertEqual(eta["fits"] as? Bool, true)
+        e["nextDailyResetAt"] = now + 1_800_000
+        eta = mission(evaluate(e, analyzer: analyzer))["eta"] as! [String: Any]
+        XCTAssertEqual(eta["fits"] as? Bool, false)
+        XCTAssertNil(mission(evaluate(e, analyzer: ["elapsedMs": 30_000, "kills": ["Dragon": 3]]))["eta"])
+        XCTAssertNil(mission(evaluate(eventos(progress: 100), analyzer: analyzer))["eta"])
+    }
+
+    func testHuntsOutsideTheCatalogDoNotCount() {
+        XCTAssertEqual(mission(evaluate(eventos(), huntId: 1))["state"] as? String, "no_count")
+        XCTAssertEqual(mission(evaluate(eventos(), huntId: nil))["state"] as? String, "unknown")
+    }
+
+    func testStreakWarnsWhenTheDayIsStillOpenNearTheReset() {
+        var e = eventos(progress: 5)
+        e["sequencia"] = ["diaAtual": 3, "fechados": 2, "custoRecuperar": 20,
+                          "dias": [["day": 1, "estado": "resgatado"], ["day": 2, "estado": "recuperar"], ["day": 3, "estado": "hoje"]]]
+        e["nextDailyResetAt"] = now + 3_600_000
+        let streak = evaluate(e)["streak"] as! [String: Any]
+        XCTAssertEqual(streak["day"] as? Int, 3)
+        XCTAssertEqual(streak["toRecover"] as? Int, 1)
+        XCTAssertEqual(streak["atRisk"] as? Bool, true)
+        e["nextDailyResetAt"] = now + 10 * 3_600_000
+        XCTAssertEqual((evaluate(e)["streak"] as! [String: Any])["atRisk"] as? Bool, false)
+        e = eventos(progress: 100, claimed: true)
+        e["sequencia"] = ["diaAtual": 1, "fechados": 0, "dias": []]
+        XCTAssertNil((evaluate(e)["streak"] as! [String: Any])["atRisk"])
+    }
+
+    func testWeeklyGoalsUseTheLiveMonsterCount() {
+        var e = eventos()
+        e["semanais"] = ["concluidas": 1, "necessarias": 5,
+                         "tarefas": [["id": "monstros", "progresso": 10, "meta": 50], ["id": "elites", "progresso": 3, "meta": 30]]]
+        let goals = evaluate(e, weekLive: 18)["weeklyGoals"] as! [[String: Any]]
+        XCTAssertEqual(goals[0]["progress"] as? Int, 18)
+        XCTAssertEqual(goals[1]["progress"] as? Int, 3)
+        XCTAssertEqual(goals[1]["goal"] as? Int, 30)
+    }
+
+    func testSupplyAlerts() {
+        let ok = HuntAlerts.evaluate(state: ["cap": ["used": 50, "total": 100], "keyBagUsed": 1, "keyBagMax": 5,
+                                             "keyClock": ["tierMs": 70, "everyMs": 100]])
+        XCTAssertTrue((ok["alerts"] as! [Any]).isEmpty)
+        XCTAssertEqual((ok["keys"] as! [String: Any])["nextKeyMs"] as? Int, 30)
+        let hot = HuntAlerts.evaluate(state: ["cap": ["used": 95, "total": 100], "keyBagUsed": 5, "keyBagMax": 5])
+        let levels = (hot["alerts"] as! [[String: String]]).map { $0["level"] }
+        XCTAssertEqual(levels, ["warn", "bad"])
+        let full = HuntAlerts.evaluate(state: ["cap": ["used": 100, "total": 100]])
+        XCTAssertEqual((full["alerts"] as! [[String: String]]).first?["level"], "bad")
     }
 }

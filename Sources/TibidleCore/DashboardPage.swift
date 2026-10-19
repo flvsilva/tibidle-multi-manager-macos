@@ -75,6 +75,13 @@ public enum DashboardPage {
     .mcount { font-variant-numeric: tabular-nums; color: var(--ink-2); font-weight: 500; white-space: nowrap; }
     .mtitle { font-size: 13px; overflow-wrap: anywhere; }
     .madvice { font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+    .streak { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .dots { display: inline-flex; gap: 3px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--grid); display: inline-block; }
+    .dot.on { background: var(--good); } .dot.miss { background: var(--warn-text); } .dot.now { box-shadow: 0 0 0 1.5px var(--accent); }
+    .goal { display: grid; grid-template-columns: minmax(0, 1fr) 70px auto; gap: 8px; align-items: center; font-size: 12px; }
+    .alert { margin-top: 8px; font-size: 12px; border-radius: 6px; padding: 6px 8px; background: var(--surface-2); }
+    .alert.warn { color: var(--warn-text); } .alert.bad { color: var(--bad-text); }
     .empty { color: var(--muted); font-size: 13px; padding: 14px 0 4px; }
 
     .section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
@@ -148,7 +155,7 @@ public enum DashboardPage {
     const REASONS = { stop: 'Parou', death: 'Morte', expired: 'Tempo esgotado', victory: 'Vitória', tower_top: 'Topo da torre',
       no_gold: 'Sem gold', cap_full: 'Cap cheio', level_cap: 'Level máximo', prey_resync_failed: 'Falha no prey' };
     const STATUS = {
-      hunting: ['Caçando', 'var(--good)'], city: ['Na cidade', 'var(--axis)'], offline: ['Desconectada', 'transparent'],
+      hunting: ['Caçando', 'var(--good)'], city: ['Na cidade', 'var(--axis)'], offline: ['App sem conexão', 'transparent'],
       replaced: ['Sessão em outro lugar', 'var(--warning)'],
     };
     const MISSION = {
@@ -157,10 +164,13 @@ public enum DashboardPage {
       on_track:  ['▶', 'Contando nesta hunt', 'var(--good-text)'],
       off_track: ['⚠', 'A hunt atual não conta', 'var(--warn-text)'],
       pending:   ['○', 'Pendente', 'var(--ink-2)'],
+      no_count:  ['⚠', 'Esta hunt não conta (Tower, Elite ou Boss)', 'var(--warn-text)'],
       unknown:   ['?', 'Hunt atual fora do catálogo', 'var(--ink-2)'],
       elite:     ['★', 'Elite', 'var(--ink-2)'],
       forge:     ['⚒', 'Forja (na cidade)', 'var(--ink-2)'],
     };
+    const WEEKLY = { monstros: 'Matar monstros', elites: 'Vencer elites', doacoes: 'Doações', ouroConsumido: 'Gastar gold',
+      mercado: 'Mercado', prey: 'Prey', revelar: 'Revelar itens', desmanchar: 'Desmanchar', refinar: 'Refinar', gema: 'Gemas', invasao: 'Invasão' };
     const VOC = { knight: 'Knight', paladin: 'Paladin', sorcerer: 'Sorcerer', druid: 'Druid', monk: 'Monk' };
     let rangeHours = 12, lastAccounts = [], lastHistory = null;
 
@@ -214,7 +224,16 @@ public enum DashboardPage {
           el('div', { class: 'bar' }, el('div', { style: { width: `${pct}%`, background: done ? 'var(--good)' : 'var(--s0)' } })));
         if (m.kind === 'monster' && !done) {
           const maps = (m.candidates || []).map((c) => c.title + (c.full ? '' : ' (parcial)'));
-          if (m.state === 'on_track') row.append(el('div', { class: 'madvice' }, `Hunt atual: ${d.currentHunt ? d.currentHunt.title : '—'}`));
+          if (m.state === 'on_track') {
+            row.append(el('div', { class: 'madvice' }, `Hunt atual: ${d.currentHunt ? d.currentHunt.title : '—'}`));
+            if (m.eta) {
+              const ok = m.eta.fits !== false;
+              row.append(el('div', { class: 'madvice', style: { color: ok ? 'var(--good-text)' : 'var(--warn-text)' } },
+                `${fmt(m.eta.perHour)} kills/h → faltam ${fmt(m.eta.remaining)}, conclui em ~${duration(m.eta.etaMs)}` +
+                (m.eta.fits === undefined ? '' : ok ? ' (antes do reset)' : ' — não dá tempo antes do reset')));
+            }
+          }
+          else if (m.state === 'no_count') row.append(el('div', { class: 'madvice' }, `Hunt sugerida: ${maps.join(' · ') || '—'}`));
           else {
             const now = d.currentHunt && a.status === 'hunting' ? `Hunt atual: ${d.currentHunt.title}. ` : '';
             row.append(el('div', { class: 'madvice' }, maps.length ? `${now}Hunt sugerida: ${maps.join(' · ')}` : `${now}Sem hunt conhecida para: ${(m.targets || []).join(', ')}`));
@@ -224,7 +243,24 @@ public enum DashboardPage {
         }
         box.append(row);
       }
-      if (d.weekly && d.weekly.needed) box.append(el('div', { class: 'madvice' }, `Semanais: ${d.weekly.done}/${d.weekly.needed} concluídas`));
+      const st = d.streak;
+      if (st) {
+        const dots = (st.days || []).map((s) => el('i', { class: 'dot ' + (s === 'resgatado' || s === 'cumprido' ? 'on' : s === 'recuperar' ? 'miss' : s === 'hoje' ? 'now' : ''), title: s }));
+        const risk = st.atRisk ? ` · ⚠ ${st.open} missão(ões) sem resgatar e o dia fecha em ${until(d.dailyResetAt)}` : '';
+        const miss = st.toRecover ? ` · ${st.toRecover} dia(s) perdido(s) — recuperar custa ${fmt(st.recoverCost)} coins` : '';
+        box.append(el('div', { class: 'streak' }, el('span', { class: 'dots' }, dots),
+          el('span', { class: 'madvice', style: { color: st.atRisk || st.toRecover ? 'var(--warn-text)' : '' } },
+            `Sequência: dia ${st.day}/7${risk}${miss}`)));
+      }
+      if (d.weeklyGoals && d.weeklyGoals.length) {
+        box.append(el('div', { class: 'mhead' }, `Metas semanais${d.weekly && d.weekly.needed ? ` · ${d.weekly.done}/${d.weekly.needed} (precisa de ${d.weekly.needed})` : ''}`));
+        for (const g of d.weeklyGoals) {
+          const pct = g.goal ? Math.min(100, 100 * g.progress / g.goal) : 0;
+          box.append(el('div', { class: 'goal' }, el('span', null, WEEKLY[g.id] || g.id),
+            el('div', { class: 'bar' }, el('div', { style: { width: `${pct}%`, background: pct >= 100 ? 'var(--good)' : 'var(--s0)' } })),
+            el('span', { class: 'mcount' }, `${fmt(g.progress)}/${fmt(g.goal)}`)));
+        }
+      } else if (d.weekly && d.weekly.needed) box.append(el('div', { class: 'madvice' }, `Semanais: ${d.weekly.done}/${d.weekly.needed} concluídas`));
       return box;
     }
 
@@ -269,6 +305,13 @@ public enum DashboardPage {
           `Última hunt: ${duration(num(s.elapsedSec) * 1000)} · ${REASONS[s.reason] || s.reason || ''} · XP/h ${fmt(s.xpPerHour)} · balance ${signed(s.balance)}`));
       } else {
         node.append(el('div', { class: 'empty' }, a.status === 'offline' ? 'Abra o jogo nesta aba do gerenciador.' : 'Sem hunt em andamento.'));
+      }
+      if (a.supply) {
+        for (const x of a.supply.alerts || []) node.append(el('div', { class: 'alert ' + x.level }, x.text));
+        const k = a.supply.keys;
+        if (k) node.append(el('div', { class: 'madvice' }, `Chaves: ${k.used}/${k.max}` + (k.nextKeyMs && k.used < k.max ? ` · próxima em ~${duration(k.nextKeyMs)}` : '')));
+        const c = a.supply.cap;
+        if (c) node.append(el('div', { class: 'madvice' }, `Mochila: ${fmt(c.used)}/${fmt(c.total)} (${Math.round(100 * c.used / c.total)}%)`));
       }
       const daily = missions(a);
       if (daily) node.append(daily);

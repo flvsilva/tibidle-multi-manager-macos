@@ -43,6 +43,9 @@ public enum CollectorScript {
         balance: typeof s.balance === 'number' ? s.balance : undefined,
         cap: pick(s.cap, ['used', 'total']),
         tower: pick(s.tower, ['floor', 'cleared', 'mode']),
+        keyBagUsed: s.keyBagUsed,
+        keyBagMax: s.keyBagMax,
+        keyClock: pick(s.keyClock, ['tierMs', 'everyMs']),
       } : undefined;
 
       const strings = (list) => Array.isArray(list) ? list.filter((v) => typeof v === 'string').slice(0, 8) : [];
@@ -50,18 +53,27 @@ public enum CollectorScript {
         targets: strings(t.targets),
         rewards: Array.isArray(t.rewards) ? t.rewards.slice(0, 6).map((r) => pick(r, REWARD)) : [],
       }) : null;
-      // Daily missions only; login calendar, streak, weekly task list and prizes' ids are dropped.
+      const DAY = ['day', 'estado'];
+      const WEEKLY = ['id', 'progresso', 'meta'];
+      const streak = (q) => isObject(q) ? Object.assign(pick(q, ['diaAtual', 'terminaEm', 'fechados', 'custoRecuperar']), {
+        dias: Array.isArray(q.dias) ? q.dias.slice(0, 7).map((d) => pick(d, DAY)) : [],
+      }) : undefined;
+      // Missions, streak and weekly goals only; the login calendar and every prize/item id are dropped.
       const eventos = (e) => isObject(e) ? {
         serverDay: e.serverDay,
         nextDailyResetAt: e.nextDailyResetAt,
         diarias: isObject(e.diarias) && Array.isArray(e.diarias.slots) ? { slots: e.diarias.slots.slice(0, 2).map(task) } : undefined,
-        semanais: pick(e.semanais, ['concluidas', 'necessarias']),
+        semanais: isObject(e.semanais) ? Object.assign(pick(e.semanais, ['concluidas', 'necessarias']), {
+          tarefas: Array.isArray(e.semanais.tarefas) ? e.semanais.tarefas.slice(0, 8).map((t) => pick(t, WEEKLY)) : [],
+        }) : undefined,
+        sequencia: streak(e.sequencia),
       } : undefined;
       const progress = (p) => isObject(p) ? {
         dia: isObject(p.dia) ? {
           serverDay: p.dia.serverDay,
           slots: Array.isArray(p.dia.slots) ? p.dia.slots.slice(0, 2).map((x) => pick(x, ['taskId', 'exibido'])) : [],
         } : undefined,
+        semana: pick(p.semana, ['monstros']),
       } : undefined;
 
       const post = (type, data) => {

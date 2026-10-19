@@ -106,6 +106,10 @@ public final class DashboardStore {
                 }
                 entry["missionsLive"] = ["serverDay": progress["serverDay"] as? String ?? "", "slots": slots] as [String: Any]
             }
+            if let week = (data["eventosProgresso"] as? [String: Any])?["semana"] as? [String: Any],
+               let kills = number(week["monstros"]) {
+                entry["weekLive"] = kills
+            }
             if let analyzer = data["analyzer"] as? [String: Any] {
                 entry["analyzer"] = analyzer
                 if type == "resume" || entry["huntStartedAt"] == nil, let elapsed = number(analyzer["elapsedMs"]) {
@@ -141,6 +145,7 @@ public final class DashboardStore {
         guard let eventos = eventos as? [String: Any], eventos["diarias"] != nil else { return }
         entry["missions"] = eventos
         entry["missionsLive"] = nil
+        entry["weekLive"] = nil
     }
 
     private func sample(account: Int, huntId: Any?, analyzer: [String: Any], at date: Date) {
@@ -174,12 +179,18 @@ public final class DashboardStore {
                     out["daily"] = MissionAdvisor.evaluate(
                         eventos: eventos, live: entry["missionsLive"] as? [String: Any],
                         hunting: entry["status"] as? String == "hunting", training: entry["training"] as? Bool == true,
-                        currentHuntId: number(entry["huntId"]).map { Int($0) }, catalog: catalog)
+                        currentHuntId: number(entry["huntId"]).map { Int($0) }, catalog: catalog,
+                        analyzer: entry["analyzer"] as? [String: Any], weekLive: entry["weekLive"] as? Double,
+                        now: now().timeIntervalSince1970 * 1000)
                 } else if let id = number(entry["huntId"]), let hunt = catalog.hunt(id: Int(id)) {
                     out["daily"] = ["missions": [], "currentHunt": ["id": hunt.id, "title": hunt.title]] as [String: Any]
                 }
                 out["missions"] = nil
                 out["missionsLive"] = nil
+                out["weekLive"] = nil
+                if entry["status"] as? String == "hunting", let state = entry["state"] as? [String: Any] {
+                    out["supply"] = HuntAlerts.evaluate(state: state)
+                }
                 return out
             }
             return json(["generatedAt": now().timeIntervalSince1970 * 1000, "accounts": accounts])
