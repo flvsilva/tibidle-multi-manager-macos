@@ -50,8 +50,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 cp LICENSE README.md THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
-xattr -cr "$APP"
-codesign --force --deep --sign - "$APP"
+# The file provider may re-add Finder metadata between the two commands; retry until the signature takes.
+for attempt in 1 2 3 4 5; do
+  xattr -cr "$APP" 2>/dev/null || true
+  xattr -d com.apple.FinderInfo "$APP" 2>/dev/null || true
+  codesign --force --deep --sign - "$APP" && break
+  [ "$attempt" = 5 ] && { echo "Falha ao assinar o app" >&2; exit 1; }
+  sleep 1
+done
 
 rm -f "$DIST/TibidleMultiManager-macOS.zip"
 ditto -c -k --keepParent "$APP" "$DIST/TibidleMultiManager-macOS.zip"
