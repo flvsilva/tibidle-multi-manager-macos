@@ -191,4 +191,25 @@ final class SkillTests: XCTestCase {
         store.ingest(account: 0, json: #"{"type":"hunt_started","data":{"huntId":10,"state":{}}}"#)
         XCTAssertEqual(bestiary()?["kills"] as? Double, 1100, "finished hunt is folded into the counter, not lost or doubled")
     }
+
+    func testBestiaryDoesNotDoubleCountWhenTheAppOpensMidHunt() {
+        var clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let store = DashboardStore(databaseURL: nil, now: { clock })
+        store.setBestiaries(HuntBestiaryCatalog(json: Data(Self.selectJSON.utf8))!)
+        func kills() -> Double? {
+            let accounts = (try! JSONSerialization.jsonObject(with: store.stateJSON()) as! [String: Any])["accounts"] as! [[String: Any]]
+            return (accounts[0]["bestiary"] as? [String: Any])?["kills"] as? Double
+        }
+        // The app opens mid-hunt: the server counter (2400) already includes the 2376 kills so far.
+        store.ingest(account: 0, json: #"{"type":"resume","data":{"huntId":10,"huntBestiary":{"10":2400},"analyzer":{"elapsedMs":7400000,"killsTotal":2376,"kills":{}},"state":{}}}"#)
+        XCTAssertEqual(kills(), 2400, "no double counting of the hunt in progress")
+        clock += 60
+        store.ingest(account: 0, json: #"{"type":"frame","data":{"analyzer":{"elapsedMs":7460000,"killsTotal":2400,"kills":{}}}}"#)
+        XCTAssertEqual(kills(), 2424, "kills made after the counter was read are added")
+        // Finishing the hunt folds only the new kills, and the next hunt starts from the folded counter.
+        store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":10,"reason":"manual","elapsedSec":7500,"killsTotal":2430,"xp":"1","lootGold":0,"suppliesGold":0,"balance":0}}}"#)
+        store.ingest(account: 0, json: #"{"type":"hunt_started","data":{"huntId":10,"state":{}}}"#)
+        store.ingest(account: 0, json: #"{"type":"frame","data":{"analyzer":{"elapsedMs":60000,"killsTotal":0,"kills":{}}}}"#)
+        XCTAssertEqual(kills(), 2454, "2400 read + (2430 - 2376) made since")
+    }
 }

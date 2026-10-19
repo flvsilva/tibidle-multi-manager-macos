@@ -113,6 +113,7 @@ public final class DashboardStore {
             entry["invasion"] = data["invasao"]
             if let battle = data["battleConfigs"] { entry["battle"] = battle }
             entry["huntBestiary"] = data["huntBestiary"]
+            entry["bestiarySnap"] = 0.0
         case "invasion_update":
             if let invasion = data["invasao"] as? [String: Any] { entry["invasion"] = invasion }
         case "eventos_state", "eventos_result":
@@ -126,9 +127,14 @@ public final class DashboardStore {
             entry["offline"] = nil
             entry["huntStartedAt"] = date.timeIntervalSince1970 * 1000
             modeled[account] = ([:], 0, true, nil)
+            entry["bestiarySnap"] = 0.0
         case "resume", "frame":
             if type == "resume", let battle = data["battleConfigs"] { entry["battle"] = battle }
-            if type == "resume", let counters = data["huntBestiary"] { entry["huntBestiary"] = counters }
+            if type == "resume", let counters = data["huntBestiary"] {
+                // The counter already holds the kills made so far in this hunt: count only what comes after.
+                entry["huntBestiary"] = counters
+                entry["bestiarySnap"] = number((data["analyzer"] as? [String: Any])?["killsTotal"]) ?? 0
+            }
             if type == "resume" { modeled[account] = nil }
             entry["status"] = "hunting"
             if let huntId = data["huntId"] { entry["huntId"] = huntId }
@@ -163,7 +169,8 @@ public final class DashboardStore {
             // Until the next welcome refreshes the server's counters, fold the finished hunt in locally.
             if let id = number(summary["huntId"]), var counters = entry["huntBestiary"] as? [String: Any],
                let kills = number(summary["killsTotal"]) {
-                counters[String(Int(id))] = (number(counters[String(Int(id))]) ?? 0) + kills
+                let fresh = max(0, kills - (number(entry["bestiarySnap"]) ?? 0))
+                counters[String(Int(id))] = (number(counters[String(Int(id))]) ?? 0) + fresh
                 entry["huntBestiary"] = counters
             }
             entry["analyzer"] = nil
@@ -253,6 +260,7 @@ public final class DashboardStore {
                 out["bestiary"] = bestiary
             }
             out["huntBestiary"] = nil
+            out["bestiarySnap"] = nil
             out["invasion"] = InvasionAdvisor.evaluate(entry["invasion"] as? [String: Any], now: now().timeIntervalSince1970 * 1000)
             out["missions"] = nil
             out["missionsLive"] = nil
@@ -578,6 +586,7 @@ extension DashboardStore {
               let counters = entry["huntBestiary"] as? [String: Any] else { return nil }
         let analyzer = entry["analyzer"] as? [String: Any]
         return BestiaryAdvisor.evaluate(info, counted: number(counters[String(huntId)]) ?? 0,
-                                        session: number(analyzer?["killsTotal"]) ?? 0, elapsedMs: number(analyzer?["elapsedMs"]) ?? 0)
+                                        session: max(0, (number(analyzer?["killsTotal"]) ?? 0) - (number(entry["bestiarySnap"]) ?? 0)),
+                                        elapsedMs: number(analyzer?["elapsedMs"]) ?? 0, huntKills: number(analyzer?["killsTotal"]))
     }
 }

@@ -56,8 +56,8 @@ public enum BestiaryAdvisor {
     /// - Parameters:
     ///   - counted: kills the server has recorded for this map (`meta.huntBestiary[huntId]`).
     ///   - session: kills of the hunt in progress (not yet in `counted`).
-    ///   - elapsedMs: duration of the hunt in progress, used for the kill rate.
-    public static func evaluate(_ entry: HuntBestiaryCatalog.Entry, counted: Double, session: Double, elapsedMs: Double) -> [String: Any] {
+    ///   - elapsedMs, huntKills: duration and total kills of the hunt in progress, for the kill rate.
+    public static func evaluate(_ entry: HuntBestiaryCatalog.Entry, counted: Double, session: Double, elapsedMs: Double, huntKills: Double? = nil) -> [String: Any] {
         let kills = counted + session
         let stages = entry.stages.map { ["kills": $0.kills, "value": $0.value, "done": kills >= $0.kills] as [String: Any] }
         var result: [String: Any] = ["bonus": entry.bonus, "kills": kills, "counted": counted, "stages": stages,
@@ -65,8 +65,9 @@ public enum BestiaryAdvisor {
         let final = entry.stages.last?.kills ?? 0
         result["done"] = kills >= final
         // Kill rate of the current hunt; needs a few minutes of data to be meaningful.
-        guard elapsedMs >= 5 * 60_000, session > 0 else { return result }
-        let perHour = session / (elapsedMs / 3_600_000)
+        let rateKills = huntKills ?? session
+        guard elapsedMs >= 5 * 60_000, rateKills > 0 else { return result }
+        let perHour = rateKills / (elapsedMs / 3_600_000)
         result["perHour"] = perHour
         if let next = entry.stages.first(where: { kills < $0.kills }) {
             result["next"] = ["kills": next.kills, "value": next.value, "remaining": next.kills - kills,
