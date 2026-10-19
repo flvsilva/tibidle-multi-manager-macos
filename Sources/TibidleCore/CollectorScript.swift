@@ -69,9 +69,16 @@ public enum CollectorScript {
         for (const voc of Object.keys(c).slice(0, 6)) {
           const b = c[voc];
           if (!isObject(b)) continue;
+          const str = (x) => typeof x === 'string' ? x.slice(0, 64) : null;
+          const pct = (x) => typeof x === 'number' && isFinite(x) ? x : undefined;
           out[voc] = {
-            skills: Array.isArray(b.skills) ? b.skills.slice(0, 12).map((x) => typeof x === 'string' ? x : null) : [],
+            skills: Array.isArray(b.skills) ? b.skills.slice(0, 12).map(str) : [],
             minCreatures: isObject(b.minCreatures) ? Object.fromEntries(Object.entries(b.minCreatures).filter(([, v]) => typeof v === 'number').slice(0, 16)) : {},
+            heals: Array.isArray(b.heals) ? b.heals.slice(0, 8).map((h) => isObject(h) ? { name: str(h.name), percent: pct(h.percent) } : null) : [],
+            manaPotion: isObject(b.manaPotion) ? { name: str(b.manaPotion.name), percent: pct(b.manaPotion.percent) } : undefined,
+            supports: Array.isArray(b.supports) ? b.supports.slice(0, 8).map(str) : [],
+            ammo: str(b.ammo),
+            who: pct(b.who),
           };
         }
         return out;

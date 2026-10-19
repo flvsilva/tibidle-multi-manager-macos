@@ -151,6 +151,19 @@ public enum DashboardPage {
     .sk-cost { grid-column: 1 / -1; color: var(--muted); font-size: 11px; }
     .sk-note { margin-top: 8px; padding: 6px 8px; font-size: 12px; border-radius: 6px; background: var(--surface); }
     .sk-note.warn { color: var(--warn-text); } .sk-note.good { color: var(--good-text); }
+    .pr-section { margin-bottom: 16px; }
+    .pr-section h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+    .pr-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); }
+    .pr-row:first-of-type { border-top: 0; }
+    .pr-row .grow { flex: 1; min-width: 160px; }
+    .pr-row small { display: block; color: var(--muted); font-size: 11px; }
+    .pr-btn, .pr-input, .pr-area { font: inherit; font-size: 12px; color: var(--ink); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; }
+    .pr-btn { cursor: pointer; } .pr-btn:hover { border-color: var(--axis); } .pr-btn.danger:hover { color: var(--bad-text); }
+    .pr-input { min-width: 0; flex: 1; } .pr-area { width: 100%; box-sizing: border-box; min-height: 64px; font-family: ui-monospace, monospace; }
+    .pr-detail { width: 100%; padding: 8px 10px; margin-top: 4px; border-radius: 8px; background: var(--surface-2); font-size: 12px; }
+    .pr-detail ol { margin: 6px 0 0; padding-left: 20px; } .pr-detail li { margin: 2px 0; }
+    .pr-msg { padding: 6px 10px; margin-bottom: 12px; border-radius: 6px; font-size: 12px; background: var(--surface-2); }
+    .pr-msg.bad { color: var(--bad-text); } .pr-msg.ok { color: var(--good-text); }
     .sk-foot { font-size: 11px; color: var(--muted); }
     details { margin-top: 10px; font-size: 12px; color: var(--ink-2); }
     summary { cursor: pointer; }
@@ -166,6 +179,12 @@ public enum DashboardPage {
     </style>
     </head>
     <body>
+    <div class="modal" id="presets-modal" role="dialog" aria-modal="true" aria-labelledby="presets-title">
+      <div class="modal-box">
+        <div class="modal-head"><h2 id="presets-title">Presets de batalha</h2><button type="button" id="presets-close" aria-label="Fechar">×</button></div>
+        <div class="modal-body" id="presets-body"></div>
+      </div>
+    </div>
     <div class="modal" id="skills-modal" role="dialog" aria-modal="true" aria-labelledby="skills-title">
       <div class="modal-box">
         <div class="modal-head"><h2 id="skills-title">Skills</h2><button type="button" id="skills-close" aria-label="Fechar">×</button></div>
@@ -176,6 +195,7 @@ public enum DashboardPage {
       <header>
         <h1><span>Tibidle</span> Hunts</h1>
         <span class="meta" id="meta">Conectando…</span>
+        <button class="theme" id="presets-open" type="button">Presets</button>
         <button class="theme" id="theme" type="button">Tema</button>
       </header>
       <div class="summary" id="summary"></div>
@@ -492,9 +512,106 @@ public enum DashboardPage {
       return node;
     }
 
+    // ---- battle presets (local library; writes only work from this Mac) ----
+    let presetData = null, presetMsg = null;
+    const post = async (path, body) => {
+      const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Tibidle': '1' }, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error(r.status === 403 ? 'Salvar só funciona abrindo o dashboard neste Mac (localhost).' : `Erro ${r.status}`);
+      return r.json();
+    };
+    async function presetAction(path, body, okText) {
+      try {
+        const res = await post(path, body);
+        presetMsg = res.ok ? { ok: true, text: okText } : { ok: false, text: res.error || 'Não foi possível concluir.' };
+      } catch (e) { presetMsg = { ok: false, text: e.message }; }
+      await loadPresets();
+    }
+    async function loadPresets() {
+      try { presetData = await getJSON('/api/presets'); } catch (_) { presetData = null; }
+      renderPresets();
+    }
+    const dateText = (ms) => new Date(ms).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    async function showPresetDetail(p, box, accountIndex) {
+      let data;
+      try { data = await getJSON(`/api/presets/compare?id=${p.id}&account=${accountIndex}`); } catch (_) { box.textContent = 'Falha ao carregar.'; return; }
+      const parts = [];
+      if (data.notice) parts.push(el('div', { class: 'madvice' }, data.notice));
+      if (data.differences) parts.push(el('div', null, el('b', null, 'Diferenças em relação à config atual'),
+        data.differences.length ? el('ul', null, data.differences.map((d) => el('li', null, d))) : el('div', { class: 'madvice' }, 'Igual à configuração atual.')));
+      if (data.damage) parts.push(el('div', { class: 'madvice' }, `Dano estimado (${data.damage.character}): atual ~${fmt(data.damage.current)}/s · preset ~${fmt(data.damage.preset)}/s`));
+      for (const w of data.warnings || []) parts.push(el('div', { class: 'madvice warn' }, w));
+      parts.push(el('div', null, el('b', null, 'Passo a passo no jogo'), el('ol', null, (data.steps || []).map((x) => el('li', null, x)))));
+      box.replaceChildren(...parts);
+    }
+    function renderPresets() {
+      const body = $('presets-body');
+      if (!presetData) { body.replaceChildren(el('div', { class: 'empty' }, 'Sem conexão com o gerenciador.')); return; }
+      const nodes = [];
+      if (presetMsg) nodes.push(el('div', { class: 'pr-msg ' + (presetMsg.ok ? 'ok' : 'bad') }, presetMsg.text));
+      if (!presetData.canWrite) nodes.push(el('div', { class: 'pr-msg' }, 'Modo leitura: para salvar, importar ou apagar presets abra o dashboard neste Mac (localhost).'));
+      if (presetData.canWrite) {
+        const sec = el('div', { class: 'pr-section' }, el('h3', null, 'Salvar a configuração atual'));
+        let any = false;
+        for (const a of presetData.accounts) for (const v of a.vocations) {
+          any = true;
+          const input = el('input', { class: 'pr-input', value: v.name, maxlength: '80' });
+          const btn = el('button', { class: 'pr-btn', type: 'button' }, 'Salvar');
+          btn.addEventListener('click', () => presetAction('/api/presets/save', { account: a.index, vocation: v.vocation, name: input.value }, 'Preset salvo.'));
+          sec.append(el('div', { class: 'pr-row' }, el('div', { class: 'grow' }, `${a.label} · ${v.character}`, el('small', null, `${v.vocation}${a.huntTitle ? ` · ${a.huntTitle}` : ' · sem hunt em andamento'}`)), input, btn));
+        }
+        if (!any) sec.append(el('div', { class: 'madvice' }, 'O app ainda não leu a configuração de batalha de nenhuma conta. Recarregue o jogo (⌘R na aba) e aguarde alguns segundos.'));
+        nodes.push(sec);
+      }
+      const lib = el('div', { class: 'pr-section' }, el('h3', null, `Biblioteca (${presetData.presets.length})`));
+      if (!presetData.presets.length) lib.append(el('div', { class: 'madvice' }, 'Nenhum preset salvo ainda.'));
+      for (const p of presetData.presets) {
+        const detail = el('div', { class: 'pr-detail', style: { display: 'none' } });
+        const row = el('div', { class: 'pr-row' }, el('div', { class: 'grow' }, el('b', null, p.name), el('small', null, `${p.vocation} · ${dateText(p.createdAt)} · ${p.steps.length} itens`)));
+        const copy = el('button', { class: 'pr-btn', type: 'button' }, 'Copiar texto');
+        copy.addEventListener('click', async () => {
+          try { await navigator.clipboard.writeText(p.text); copy.textContent = 'Copiado'; }
+          catch (_) { window.prompt('Copie o texto do preset:', p.text); }
+          setTimeout(() => { copy.textContent = 'Copiar texto'; }, 1500);
+        });
+        const view = el('button', { class: 'pr-btn', type: 'button' }, 'Ver passos');
+        const picker = el('select', { class: 'pr-input', style: { display: 'none', flex: '0 0 auto' } }, presetData.accounts.map((a) => el('option', { value: a.index }, a.label)));
+        view.addEventListener('click', () => {
+          const open = detail.style.display === 'none';
+          detail.style.display = open ? 'block' : 'none'; picker.style.display = open ? '' : 'none';
+          if (open) showPresetDetail(p, detail, picker.value);
+        });
+        picker.addEventListener('change', () => showPresetDetail(p, detail, picker.value));
+        row.append(copy, view, picker);
+        if (presetData.canWrite) {
+          const rename = el('button', { class: 'pr-btn', type: 'button' }, 'Renomear');
+          rename.addEventListener('click', () => { const n = window.prompt('Novo nome:', p.name); if (n) presetAction('/api/presets/rename', { id: p.id, name: n }, 'Preset renomeado.'); });
+          const del = el('button', { class: 'pr-btn danger', type: 'button' }, 'Excluir');
+          del.addEventListener('click', () => { if (window.confirm(`Excluir "${p.name}"?`)) presetAction('/api/presets/delete', { id: p.id }, 'Preset excluído.'); });
+          row.append(rename, del);
+        }
+        row.append(detail);
+        lib.append(row);
+      }
+      nodes.push(lib);
+      if (presetData.canWrite) {
+        const area = el('textarea', { class: 'pr-area', placeholder: 'Cole aqui um texto de preset (começa com tbp1.)' });
+        const name = el('input', { class: 'pr-input', placeholder: 'Nome (opcional)', maxlength: '80' });
+        const btn = el('button', { class: 'pr-btn', type: 'button' }, 'Importar');
+        btn.addEventListener('click', () => presetAction('/api/presets/import', { text: area.value, name: name.value }, 'Preset importado.'));
+        nodes.push(el('div', { class: 'pr-section' }, el('h3', null, 'Importar'), area, el('div', { class: 'pr-row' }, name, btn)));
+      }
+      const scroll = body.scrollTop;
+      body.replaceChildren(...nodes);
+      body.scrollTop = scroll;
+    }
+    $('presets-open').addEventListener('click', () => { presetMsg = null; $('presets-modal').classList.add('open'); loadPresets(); });
+    const closePresets = () => $('presets-modal').classList.remove('open');
+    $('presets-close').addEventListener('click', closePresets);
+    $('presets-modal').addEventListener('click', (e) => { if (e.target === $('presets-modal')) closePresets(); });
+
     $('skills-close').addEventListener('click', closeSkills);
     $('skills-modal').addEventListener('click', (e) => { if (e.target === $('skills-modal')) closeSkills(); });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSkills(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSkills(); closePresets(); } });
 
     async function refreshState() {
       try {

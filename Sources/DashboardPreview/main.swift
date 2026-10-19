@@ -61,7 +61,7 @@ func missionJSON(_ a: Int) -> String {
 }
 let maps = [10, 10, 13]   // account 1 hunts Dragon Lair but its mission asks for Minotaurs
 for account in 0..<3 {
-    store.ingest(account: account, json: #"{"type":"welcome","data":{"account":{"name":"acc\#(account)","level":100},"huntBestiary":{"10":1450,"13":3900},"eventos":\#(missionJSON(account))}}"#)
+    store.ingest(account: account, json: #"{"type":"welcome","data":{"account":{"name":"acc\#(account)","level":100},"huntBestiary":{"10":1450,"13":3900},"battleConfigs":{"DRUID":{"skills":["Ultimate Ice Strike","Ice Strike"],"minCreatures":{"Ice Strike":2},"heals":[{"name":"Exura Vita","percent":60}],"manaPotion":{"name":"Great Mana Potion","percent":30},"supports":["Utamo Vita"]},"KNIGHT":{"skills":["Groundshaker","Berserk"],"minCreatures":{"Berserk":3},"heals":[],"supports":[]}},"eventos":\#(missionJSON(account))}}"#)
     store.ingest(account: account, json: #"{"type":"hunt_started","data":{"huntId":\#(maps[account]),"state":{"party":\#(parties[account])}}}"#)
 }
 var hunt = maps
@@ -83,11 +83,14 @@ for minute in 0..<360 {
 store.ingest(account: 2, json: #"{"type":"ended","data":{"summary":{"huntId":99,"reason":"death","elapsedSec":3100,"level":{"start":143,"end":143},"xp":"900000","xpPerHour":1045000,"lootGold":120000,"suppliesGold":170000,"balance":-50000,"killsTotal":700,"deaths":1}}}"#)
 store.ingest(account: 3, json: #"{"type":"_closed","data":{}}"#)
 clock = Date()
+_ = store.savePreset(account: 0, vocation: "KNIGHT", name: nil)
+_ = store.savePreset(account: 0, vocation: "DRUID", name: nil)
 
 let server = DashboardServer(store: store)
 let app = NSApplication.shared
 app.setActivationPolicy(.prohibited)
-let modal = CommandLine.arguments.contains("modal")
+let presets = CommandLine.arguments.contains("presets")
+let modal = CommandLine.arguments.contains("modal") || presets
 let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: modal ? 900 : 2600))
 if light { webView.appearance = NSAppearance(named: .aqua) } else { webView.appearance = NSAppearance(named: .darkAqua) }
 let window = NSWindow(contentRect: webView.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -98,8 +101,15 @@ window.orderFrontRegardless()
 server.onReady = { port in
     webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/")!))
     DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-        if modal { webView.evaluateJavaScript("document.querySelector('.skills-btn').click()", completionHandler: nil) }
+        if modal && !presets { webView.evaluateJavaScript("document.querySelector('.skills-btn').click()", completionHandler: nil) }
+        if presets {
+            webView.evaluateJavaScript("document.getElementById('presets-open').click()", completionHandler: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                webView.evaluateJavaScript("[...document.querySelectorAll('.pr-btn')].find((b) => b.textContent === 'Ver passos').click()", completionHandler: nil)
+            }
+        }
         if CommandLine.arguments.contains("expand") { webView.evaluateJavaScript("document.querySelector('tr.run').click()", completionHandler: nil) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (presets ? 2.5 : 0)) {
         webView.evaluateJavaScript(modal ? "900" : "document.querySelector('main').scrollHeight") { height, _ in
             let config = WKSnapshotConfiguration()
             config.rect = NSRect(x: 0, y: 0, width: width, height: modal ? 900 : min((height as? Double ?? 1600) + 40, 2600))
@@ -112,6 +122,7 @@ server.onReady = { port in
                 }
                 exit(0)
             }
+        }
         }
     }
 }

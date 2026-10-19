@@ -43,6 +43,8 @@ public final class DashboardStore {
             CREATE TABLE IF NOT EXISTS runs (account INTEGER, ended_at REAL, signature TEXT, summary TEXT,
                 UNIQUE(account, signature));
             -- Modeled vs real damage per hunt, used to calibrate the skill advisor.
+            CREATE TABLE IF NOT EXISTS presets (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, vocation TEXT, hunt_id INTEGER,
+                hunt_title TEXT, text TEXT, created_at REAL);
             CREATE TABLE IF NOT EXISTS calibration (account INTEGER, ended_at REAL, predicted TEXT, actual REAL);
             """)
         migrateLegacyHunts()
@@ -588,5 +590,164 @@ extension DashboardStore {
         return BestiaryAdvisor.evaluate(info, counted: number(counters[String(huntId)]) ?? 0,
                                         session: max(0, (number(analyzer?["killsTotal"]) ?? 0) - (number(entry["bestiarySnap"]) ?? 0)),
                                         elapsedMs: number(analyzer?["elapsedMs"]) ?? 0, huntKills: number(analyzer?["killsTotal"]))
+    }
+}
+
+
+// MARK: Battle presets (local library)
+
+extension DashboardStore {
+    public enum PresetError: Error, Equatable { case message(String) }
+
+    private func presetRows() -> [(id: Int, name: String, createdAt: Double, preset: BattlePreset, text: String)] {
+        var rows: [(Int, String, Double, BattlePreset, String)] = []
+        query("SELECT id, name, created_at, text FROM presets ORDER BY created_at DESC, id DESC", []) { row in
+            guard let raw = sqlite3_column_text(row, 3), let name = sqlite3_column_text(row, 1) else { return }
+            let text = String(cString: raw)
+            if case .success(let preset) = BattlePreset.decode(text) {
+                rows.append((Int(sqlite3_column_int64(row, 0)), String(cString: name), sqlite3_column_double(row, 2), preset, text))
+            }
+        }
+        return rows
+    }
+
+    /// Vocations of an account (party while hunting, roster otherwise) that have a battle config on record.
+    private func presetVocations(_ entry: [String: Any]) -> [(vocation: String, character: String, config: [String: Any])] {
+        let battle = entry["battle"] as? [String: Any] ?? [:]
+        let party = ((entry["state"] as? [String: Any])?["party"] as? [[String: Any]]) ?? (entry["roster"] as? [[String: Any]]) ?? []
+        var seen = Set<String>()
+        return party.compactMap { member in
+            guard let vocation = member["vocation"] as? String else { return nil }
+            let base = SkillAdvisor.baseVocation(vocation).uppercased()
+            guard seen.insert(base).inserted, let config = battle.first(where: { $0.key.uppercased() == base })?.value as? [String: Any]
+            else { return nil }
+            return (base, member["name"] as? String ?? BattlePreset.vocationLabel(base), config)
+        }
+    }
+
+    private func huntTitle(_ entry: [String: Any]) -> (id: Int?, title: String) {
+        guard entry["status"] as? String == "hunting", let id = number(entry["huntId"]).map({ Int($0) }) else { return (nil, "") }
+        return (id, catalog.hunt(id: id)?.title ?? "Hunt #\(id)")
+    }
+
+    private func uniqueName(_ wanted: String) -> String {
+        let existing = Set(presetRows().map(\.name))
+        guard existing.contains(wanted) else { return wanted }
+        var n = 2
+        while existing.contains("\(wanted) (\(n))") { n += 1 }
+        return "\(wanted) (\(n))"
+    }
+
+    private func cleanName(_ name: String?) -> String? {
+        let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : String(trimmed.prefix(80))
+    }
+
+    public func presetsJSON(canWrite: Bool) -> Data {
+        queue.sync {
+            let library = presetRows().map { row -> [String: Any] in
+                ["id": row.id, "name": row.name, "vocation": row.preset.vocation, "huntId": row.preset.huntId as Any,
+                 "huntTitle": row.preset.huntTitle, "createdAt": row.createdAt * 1000, "text": row.text, "steps": row.preset.steps()]
+            }
+            let accounts = live.enumerated().map { index, entry -> [String: Any] in
+                let hunt = huntTitle(entry)
+                return ["index": index, "label": names[index], "huntTitle": hunt.title,
+                        "vocations": presetVocations(entry).map { ["vocation": $0.vocation, "character": $0.character,
+                                                                   "name": BattlePreset.defaultName(huntTitle: hunt.title, vocation: $0.vocation)] }]
+            }
+            return json(["canWrite": canWrite, "presets": library, "accounts": accounts])
+        }
+    }
+
+    public func savePreset(account: Int, vocation: String, name: String?) -> Result<Int, PresetError> {
+        queue.sync {
+            guard (0..<accountCount).contains(account) else { return .failure(.message("Conta inválida.")) }
+            let entry = live[account]
+            let base = SkillAdvisor.baseVocation(vocation).uppercased()
+            guard let found = presetVocations(entry).first(where: { $0.vocation == base }) else {
+                return .failure(.message("Ainda não há configuração de batalha desta conta. Recarregue o jogo para o app lê-la."))
+            }
+            let hunt = huntTitle(entry)
+            let preset = BattlePreset(vocation: base, huntId: hunt.id, huntTitle: hunt.title, config: found.config)
+            guard !(preset.config["skills"] as? [Any] ?? []).compactMap({ $0 as? String }).isEmpty else {
+                return .failure(.message("A configuração de batalha está sem skills de ataque."))
+            }
+            return insertPreset(preset, name: cleanName(name) ?? BattlePreset.defaultName(huntTitle: hunt.title, vocation: base))
+        }
+    }
+
+    public func importPreset(text: String, name: String?) -> Result<Int, PresetError> {
+        queue.sync {
+            switch BattlePreset.decode(text) {
+            case .failure(let error): return .failure(.message(error.message))
+            case .success(let preset):
+                return insertPreset(preset, name: cleanName(name) ?? BattlePreset.defaultName(huntTitle: preset.huntTitle, vocation: preset.vocation))
+            }
+        }
+    }
+
+    private func insertPreset(_ preset: BattlePreset, name: String) -> Result<Int, PresetError> {
+        let text = preset.encoded()
+        if let duplicate = presetRows().first(where: { $0.text == text }) {
+            return .failure(.message("Este preset já está salvo como \"\(duplicate.name)\"."))
+        }
+        run("INSERT INTO presets (name, vocation, hunt_id, hunt_title, text, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            [.text(uniqueName(name)), .text(preset.vocation), .int(preset.huntId ?? 0), .text(preset.huntTitle), .text(text),
+             .double(now().timeIntervalSince1970)])
+        var id = 0
+        query("SELECT last_insert_rowid()", []) { id = Int(sqlite3_column_int64($0, 0)) }
+        return .success(id)
+    }
+
+    public func renamePreset(id: Int, name: String) -> Result<Void, PresetError> {
+        queue.sync {
+            guard let clean = cleanName(name) else { return .failure(.message("Informe um nome.")) }
+            run("UPDATE presets SET name = ? WHERE id = ?", [.text(clean), .int(id)])
+            return .success(())
+        }
+    }
+
+    public func deletePreset(id: Int) { queue.sync { run("DELETE FROM presets WHERE id = ?", [.int(id)]) } }
+
+    /// Differences from the account's current configuration, validation and the modeled damage of both.
+    public func presetComparison(id: Int, account: Int) -> Data {
+        queue.sync {
+            guard let row = presetRows().first(where: { $0.id == id }), (0..<accountCount).contains(account) else {
+                return json(["error": "Preset não encontrado."])
+            }
+            let entry = live[account]
+            let preset = row.preset
+            var result: [String: Any] = ["steps": preset.steps()]
+            let current = presetVocations(entry).first { $0.vocation == preset.vocation }
+            if let current { result["differences"] = preset.differences(from: current.config) }
+            else { result["notice"] = "Esta conta não tem um personagem \(BattlePreset.vocationLabel(preset.vocation)) para comparar." }
+
+            let members = skillMembers(entry).filter { SkillAdvisor.baseVocation($0.vocation).uppercased() == preset.vocation }
+            let skills = (preset.config["skills"] as? [Any] ?? []).compactMap { $0 as? String }
+            var warnings: [String] = []
+            for name in skills {
+                if let spell = spells.spell(named: name) {
+                    if let member = members.first, !spells.castable(spell, vocation: member.vocation, level: member.level) {
+                        warnings.append("\(name) exige level \(spell.level) ou é de outra vocação (\(member.name) é level \(member.level)).")
+                    }
+                } else if !spells.spells.isEmpty {
+                    warnings.append("\(name) não está no catálogo de magias de dano (pode ser runa ou suporte).")
+                }
+            }
+            result["warnings"] = warnings
+            let kills = ((entry["analyzer"] as? [String: Any])?["kills"] as? [String: Any])?.compactMapValues { number($0) } ?? [:]
+            if let member = members.first, kills.values.reduce(0, +) >= 20 {
+                let context = SkillAdvisor.Context(spells: spells, creatures: creatures, kills: kills, crowd: calibration.crowd)
+                var minimum: [String: Int] = [:]
+                for (key, value) in preset.config["minCreatures"] as? [String: Any] ?? [:] { minimum[key] = (value as? Int) ?? 1 }
+                let candidate = SkillAdvisor.Member(name: member.name, vocation: member.vocation, level: member.level, melee: member.melee,
+                                                    distance: member.distance, magic: member.magic, attack: member.attack,
+                                                    kit: skills.filter { spells.spell(named: $0) != nil }, minCreatures: minimum)
+                let now = SkillAdvisor.simulate(kit: member.kit, member: member, context: context).damagePerSecond
+                let then = SkillAdvisor.simulate(kit: candidate.kit, member: candidate, context: context).damagePerSecond
+                result["damage"] = ["current": now * calibration.factor, "preset": then * calibration.factor, "character": member.name]
+            }
+            return json(result)
+        }
     }
 }

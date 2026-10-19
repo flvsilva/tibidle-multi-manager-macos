@@ -1,7 +1,8 @@
 import Foundation
 import Network
 
-/// Minimal read-only HTTP server for the dashboard, open to the local network.
+/// Minimal HTTP server for the dashboard, open to the local network. Reads are open; the only writes
+/// (the preset library) are accepted from this Mac alone.
 public final class DashboardServer {
     public static let preferredPort: UInt16 = 8787
 
@@ -40,6 +41,15 @@ public final class DashboardServer {
         receive(connection, buffer: Data())
     }
 
+    private static func isLoopback(_ connection: NWConnection) -> Bool {
+        guard case .hostPort(let host, _)? = Optional(connection.endpoint) else { return false }
+        switch host {
+        case .ipv4(let address): return address == IPv4Address.loopback
+        case .ipv6(let address): return address == IPv6Address.loopback || address.isIPv4Mapped && address.asIPv4 == IPv4Address.loopback
+        default: return false
+        }
+    }
+
     private func receive(_ connection: NWConnection, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [weak self] data, _, complete, error in
             guard let self, error == nil else { connection.cancel(); return }
@@ -48,10 +58,29 @@ public final class DashboardServer {
                 if complete || buffer.count > 32 * 1024 { connection.cancel() } else { receive(connection, buffer: buffer) }
                 return
             }
-            let head = String(decoding: buffer[..<end.lowerBound], as: UTF8.self)
-            let parts = (head.components(separatedBy: "\r\n").first ?? "").split(separator: " ")
+            let lines = String(decoding: buffer[..<end.lowerBound], as: UTF8.self).components(separatedBy: "\r\n")
+            var headers: [String: String] = [:]
+            for line in lines.dropFirst() {
+                if let colon = line.firstIndex(of: ":") {
+                    headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                }
+            }
+            let length = Int(headers["content-length"] ?? "") ?? 0
+            let bodyStart = end.upperBound
+            if length > DashboardRouter.maxBody {
+                connection.send(content: HTTPResponse(status: 413, contentType: "text/plain", body: Data()).serialized(),
+                                completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
+            if buffer.count - bodyStart < length {
+                if complete { connection.cancel() } else { receive(connection, buffer: buffer) }
+                return
+            }
+            let parts = (lines.first ?? "").split(separator: " ")
             let response = parts.count >= 2
-                ? DashboardRouter.respond(method: String(parts[0]), target: String(parts[1]), store: store)
+                ? DashboardRouter.respond(HTTPRequest(method: String(parts[0]), target: String(parts[1]), headers: headers,
+                                                      body: buffer[bodyStart..<(bodyStart + length)], isLocal: Self.isLoopback(connection)),
+                                          store: store)
                 : HTTPResponse(status: 400, contentType: "text/plain", body: Data())
             var payload = response.serialized()
             if parts.first == "HEAD" { payload = payload.prefix(payload.count - response.body.count) }

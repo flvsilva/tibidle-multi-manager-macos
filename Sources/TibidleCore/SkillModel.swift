@@ -179,6 +179,9 @@ public enum SkillAdvisor {
     }
 
     struct Context {
+        init(spells: SpellCatalog, creatures: CreatureCatalog, kills: [String: Double], crowd: Int) {
+            self.spells = spells; self.creatures = creatures; self.kills = kills; self.crowd = crowd
+        }
         let spells: SpellCatalog
         let creatures: CreatureCatalog
         let kills: [String: Double]
