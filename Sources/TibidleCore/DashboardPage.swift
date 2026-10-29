@@ -173,6 +173,10 @@ public enum DashboardPage {
     th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
     th { color: var(--muted); font-weight: 500; font-size: 12px; }
     td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+    table.mini { margin-top: 4px; font-size: 12px; }
+    table.mini th, table.mini td { padding: 3px 4px; }
+    table.mini th { font-size: 11px; }
+    .swatch.me { box-shadow: 0 0 0 1.5px var(--ink); }
     td.neg-cell { color: var(--bad-text); font-weight: 600; }
     .cmp-group + .cmp-group { margin-top: 16px; }
     .cmp-group h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
@@ -330,6 +334,20 @@ public enum DashboardPage {
         else text += ' · estimativa de tempo após alguns minutos de hunt';
       }
       return el('div', { class: 'bestiary' }, el('div', { class: 'mhead' }, `Bestiário da hunt · ${BONUS[b.bonus] || b.bonus}`), bar, el('div', { class: 'madvice' }, text));
+    }
+
+    // Finished hunts on this map near the current level: is the gap the level or the setup?
+    function benchmark(a) {
+      const b = a.benchmark;
+      if (!b || !b.rows || !b.rows.length) return null;
+      const cell = (v, cls) => el('td', { class: 'n' + (cls ? ' ' + cls : '') }, v);
+      return el('div', { class: 'bestiary' }, el('div', { class: 'mhead' }, `Histórico nesta hunt no nível ${b.level} (±${b.range})`),
+        el('table', { class: 'mini' },
+          el('thead', null, el('tr', null, el('th', null, 'Conta'), ['Lucro/h', 'Supplies/h', 'Kills/h', 'Horas'].map((h) => el('th', { class: 'n' }, h)))),
+          el('tbody', null, b.rows.map((r) => el('tr', { title: `${r.runs} hunt(s), nível ${r.levels}, recebido ${fmt(r.damageTakenPerHour)}/h` },
+            el('td', null, el('span', { class: 'swatch' + (r.account === a.index ? ' me' : ''), style: { background: SERIES[r.account] } }), r.label),
+            cell(signed(r.profitPerHour), r.profitPerHour >= 0 ? 'pos' : 'neg'), cell(fmt(r.suppliesPerHour)), cell(fmt(r.killsPerHour)),
+            cell(r.hours.toLocaleString('pt-BR')))))));
     }
 
     let openSkills = null;
@@ -491,6 +509,8 @@ public enum DashboardPage {
         const when = inv.next.live ? 'em andamento' : `começa às ${time(inv.next.startAt)} (${until(inv.next.startAt)})`;
         node.append(el('div', { class: 'note' }, `${inv.name}${inv.boss ? ` · ${inv.boss}` : ''}: ${inv.joined ? 'inscrito' : 'não inscrito'} · ${when}`));
       }
+      const bm = benchmark(a);
+      if (bm) node.append(bm);
       const be = bestiary(a);
       if (be) node.append(be);
       const sk = skillsButton(a);

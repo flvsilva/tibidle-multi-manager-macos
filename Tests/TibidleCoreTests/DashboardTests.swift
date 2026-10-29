@@ -147,6 +147,34 @@ final class DashboardStoreTests: XCTestCase {
         XCTAssertEqual((object(store.stateJSON())["accounts"] as! [[String: Any]])[1]["status"] as? String, "offline")
     }
 
+    func testLevelBenchmarkComparesNearbyLevelsOnTheSameMap() {
+        let store = makeStore()
+        store.setAccountNames(["A", "B", "C", "D"])
+        func finish(_ account: Int, hunt: Int, levels: (Int, Int), seconds: Int, balance: Int) {
+            store.ingest(account: account, json: #"{"type":"hunt_started","data":{"huntId":\#(hunt)}}"#)
+            clock += 1
+            store.ingest(account: account, json: #"{"type":"ended","data":{"summary":{"huntId":\#(hunt),"elapsedSec":\#(seconds),"level":{"start":\#(levels.0),"end":\#(levels.1)},"balance":\#(balance),"suppliesGold":\#(seconds),"killsTotal":\#(seconds)}}}"#)
+        }
+        finish(1, hunt: 151, levels: (79, 80), seconds: 7200, balance: 100_000)   // counts: B near level 80
+        finish(1, hunt: 151, levels: (80, 80), seconds: 3600, balance: 50_000)    // counts
+        finish(1, hunt: 151, levels: (90, 91), seconds: 7200, balance: 999_999)   // too far from level 80
+        finish(1, hunt: 151, levels: (80, 80), seconds: 600, balance: 999_999)    // too short
+        finish(1, hunt: 7, levels: (80, 80), seconds: 7200, balance: 999_999)     // another map
+        finish(2, hunt: 151, levels: (81, 82), seconds: 3600, balance: 20_000)    // C, counts
+        store.ingest(account: 2, json: #"{"type":"hunt_started","data":{"huntId":151,"state":{"character":{"level":80}}}}"#)
+
+        let account = (object(store.stateJSON())["accounts"] as! [[String: Any]])[2]
+        let benchmark = account["benchmark"] as! [String: Any]
+        XCTAssertEqual(benchmark["level"] as? Int, 80)
+        let rows = benchmark["rows"] as! [[String: Any]]
+        XCTAssertEqual(rows.map { $0["label"] as? String }, ["B", "C"])
+        XCTAssertEqual(rows[0]["runs"] as? Int, 2)
+        XCTAssertEqual(rows[0]["profitPerHour"] as? Int, 50_000)    // 150k over 3h
+        XCTAssertEqual(rows[0]["levels"] as? String, "79–80")
+        XCTAssertEqual(rows[0]["suppliesPerHour"] as? Int, 3600)
+        XCTAssertEqual(rows[1]["profitPerHour"] as? Int, 20_000)
+    }
+
     func testRejectsInvalidInput() {
         let store = makeStore()
         store.ingest(account: 7, json: #"{"type":"welcome","data":{}}"#)

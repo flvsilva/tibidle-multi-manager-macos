@@ -23,6 +23,8 @@ public final class DashboardStore {
     /// Modeled damage accumulated during the current hunt, per assumed crowd size, plus the seconds covered.
     private var modeled: [Int: (damage: [Int: Double], seconds: Double, valid: Bool, last: Date?)] = [:]
     static let crowdSizes = [1, 2, 3, 4, 6, 8]
+    /// Finished hunts, newest first, parsed once and dropped whenever a hunt is recorded.
+    var runCache: [(account: Int, endedAt: Double, summary: [String: Any])]?
 
     public init(databaseURL: URL?, now: @escaping () -> Date = Date.init) {
         self.now = now
@@ -181,6 +183,7 @@ public final class DashboardStore {
                     .map { "\(summary[$0] ?? "")" }.joined(separator: "|")
                 run("INSERT OR IGNORE INTO runs (account, ended_at, signature, summary) VALUES (?, ?, ?, ?)",
                     [.int(account), .double(date.timeIntervalSince1970), .text(signature), .text(text)])
+                runCache = nil
             }
         case "session_takeover", "session_replaced":
             entry["status"] = "replaced"
@@ -270,6 +273,9 @@ public final class DashboardStore {
             if entry["status"] as? String == "hunting", let state = entry["state"] as? [String: Any] {
                 out["supply"] = HuntAlerts.evaluate(state: state)
             }
+            if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let benchmark = levelBenchmark(entry) {
+                out["benchmark"] = benchmark
+            }
             return out
         }
     }
@@ -356,15 +362,69 @@ extension DashboardStore {
     /// Runs shorter than this say little about a map's yield.
     static let minRankedSeconds = 300.0
 
-    private func allRuns(limit: Int = 5000) -> [(account: Int, endedAt: Double, summary: [String: Any])] {
+    private func allRuns() -> [(account: Int, endedAt: Double, summary: [String: Any])] {
+        if let runCache { return runCache }
         var runs: [(Int, Double, [String: Any])] = []
-        query("SELECT account, ended_at, summary FROM runs ORDER BY ended_at DESC LIMIT ?", [.int(limit)]) { row in
+        query("SELECT account, ended_at, summary FROM runs ORDER BY ended_at DESC LIMIT 5000", []) { row in
             guard let text = sqlite3_column_text(row, 2),
                   let summary = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)) as? [String: Any]
             else { return }
             runs.append((Int(sqlite3_column_int(row, 0)), sqlite3_column_double(row, 1), summary))
         }
+        runCache = runs
         return runs
+    }
+
+    /// How finished hunts on this map went near the current level (±`benchmarkLevels`), per account.
+    /// Separates "it is just the level" from "it is the setup".
+    static let benchmarkLevels = 2.0
+    static let minBenchmarkSeconds = 1800.0
+
+    func levelBenchmark(_ entry: [String: Any]) -> [String: Any]? {
+        let state = entry["state"] as? [String: Any]
+        guard let huntId = number(entry["huntId"]).map({ Int($0) }),
+              let level = number((state?["character"] as? [String: Any])?["level"]) ?? number((entry["account"] as? [String: Any])?["level"])
+        else { return nil }
+        return levelBenchmark(huntId: huntId, level: level)
+    }
+
+    /// Also used by the development server to compute the block from a copy of the real database.
+    public func benchmark(huntId: Int, level: Double) -> [String: Any]? {
+        queue.sync { levelBenchmark(huntId: huntId, level: level) }
+    }
+
+    private func levelBenchmark(huntId: Int, level: Double) -> [String: Any]? {
+        struct Total { var runs = 0, seconds = 0.0, balance = 0.0, loot = 0.0, supplies = 0.0, kills = 0.0, taken = 0.0, low = Double.infinity, high = 0.0 }
+        var totals: [Int: Total] = [:]
+        for run in allRuns() {
+            let s = run.summary
+            guard number(s["huntId"]).map({ Int($0) }) == huntId, let seconds = number(s["elapsedSec"]), seconds >= Self.minBenchmarkSeconds,
+                  let range = s["level"] as? [String: Any], let end = number(range["end"]) else { continue }
+            let start = number(range["start"]) ?? end
+            guard abs((start + end) / 2 - level) <= Self.benchmarkLevels else { continue }
+            var total = totals[run.account] ?? Total()
+            total.runs += 1
+            total.seconds += seconds
+            total.balance += number(s["balance"]) ?? 0
+            total.loot += number(s["lootGold"]) ?? 0
+            total.supplies += number(s["suppliesGold"]) ?? 0
+            total.kills += number(s["killsTotal"]) ?? 0
+            total.taken += number(s["damageTaken"]) ?? 0
+            total.low = min(total.low, start)
+            total.high = max(total.high, end)
+            totals[run.account] = total
+        }
+        guard !totals.isEmpty else { return nil }
+        let rows = totals.sorted { $0.key < $1.key }.map { account, total -> [String: Any] in
+            let hours = total.seconds / 3600
+            return ["account": account, "label": names.indices.contains(account) ? names[account] : "Conta \(account + 1)",
+                    "runs": total.runs, "hours": (hours * 10).rounded() / 10,
+                    "levels": total.low == total.high ? "\(Int(total.low))" : "\(Int(total.low))–\(Int(total.high))",
+                    "profitPerHour": Int((total.balance / hours).rounded()), "lootPerHour": Int((total.loot / hours).rounded()),
+                    "suppliesPerHour": Int((total.supplies / hours).rounded()), "killsPerHour": Int((total.kills / hours).rounded()),
+                    "damageTakenPerHour": Int((total.taken / hours).rounded())]
+        }
+        return ["level": Int(level), "range": Int(Self.benchmarkLevels), "minMinutes": Int(Self.minBenchmarkSeconds / 60), "rows": rows]
     }
 
     /// Yield per map, overall (`account: null`) and per account, from finished hunts.
