@@ -24,7 +24,7 @@ public final class DashboardStore {
     private var modeled: [Int: (damage: [Int: Double], seconds: Double, valid: Bool, last: Date?)] = [:]
     static let crowdSizes = [1, 2, 3, 4, 6, 8]
     /// Finished hunts, newest first, parsed once and dropped whenever a hunt is recorded.
-    var runCache: [(account: Int, endedAt: Double, summary: [String: Any])]?
+    var runCache: [(account: Int, endedAt: Double, summary: [String: Any], id: Int)]?
     /// Average mana per party member during the current hunt (reset when a hunt starts or resumes).
     private var mana: [Int: ManaTracker] = [:]
 
@@ -290,6 +290,9 @@ public final class DashboardStore {
             if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let benchmark = levelBenchmark(entry) {
                 out["benchmark"] = benchmark
             }
+            if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let insights = insights(account: index, entry) {
+                out["insights"] = insights
+            }
             return out
         }
     }
@@ -379,14 +382,14 @@ extension DashboardStore {
     /// Runs shorter than this say little about a map's yield.
     static let minRankedSeconds = 300.0
 
-    private func allRuns() -> [(account: Int, endedAt: Double, summary: [String: Any])] {
+    func allRuns() -> [(account: Int, endedAt: Double, summary: [String: Any], id: Int)] {
         if let runCache { return runCache }
-        var runs: [(Int, Double, [String: Any])] = []
-        query("SELECT account, ended_at, summary FROM runs ORDER BY ended_at DESC LIMIT 5000", []) { row in
+        var runs: [(Int, Double, [String: Any], Int)] = []
+        query("SELECT account, ended_at, summary, rowid FROM runs ORDER BY ended_at DESC LIMIT 5000", []) { row in
             guard let text = sqlite3_column_text(row, 2),
                   let summary = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)) as? [String: Any]
             else { return }
-            runs.append((Int(sqlite3_column_int(row, 0)), sqlite3_column_double(row, 1), summary))
+            runs.append((Int(sqlite3_column_int(row, 0)), sqlite3_column_double(row, 1), summary, Int(sqlite3_column_int64(row, 3))))
         }
         runCache = runs
         return runs
@@ -689,7 +692,7 @@ extension DashboardStore {
     }
 
     /// Vocations of an account (party while hunting, roster otherwise) that have a battle config on record.
-    private func presetVocations(_ entry: [String: Any]) -> [(vocation: String, character: String, config: [String: Any])] {
+    func presetVocations(_ entry: [String: Any]) -> [(vocation: String, character: String, config: [String: Any])] {
         let battle = entry["battle"] as? [String: Any] ?? [:]
         let party = ((entry["state"] as? [String: Any])?["party"] as? [[String: Any]]) ?? (entry["roster"] as? [[String: Any]]) ?? []
         var seen = Set<String>()
@@ -855,6 +858,37 @@ extension DashboardStore {
                 result["damage"] = ["current": now * calibration.factor, "preset": then * calibration.factor, "character": member.name]
             }
             return json(result)
+        }
+    }
+}
+
+
+// MARK: Insights on the hunt in progress
+
+extension DashboardStore {
+    func insights(account: Int, _ entry: [String: Any]) -> [String: Any]? {
+        let state = entry["state"] as? [String: Any]
+        guard let huntId = number(entry["huntId"]).map({ Int($0) }),
+              let level = number((state?["character"] as? [String: Any])?["level"]) ?? number((entry["account"] as? [String: Any])?["level"])
+        else { return nil }
+        let setup = presetVocations(entry).reduce(into: [String: [String: Any]]()) { $0[$1.vocation] = BattlePreset.normalize($1.config) }
+        return insights(account: account, huntId: huntId, level: level, analyzer: entry["analyzer"] as? [String: Any], setup: setup)
+    }
+
+    private func insights(account: Int, huntId: Int, level: Double, analyzer: [String: Any]?, setup: [String: [String: Any]]) -> [String: Any]? {
+        let runs = allRuns().filter { $0.account == account }.map { HuntInsights.Run(id: $0.id, summary: $0.summary) }
+        guard let reference = HuntInsights.reference(runs: runs, huntId: huntId, level: level, now: now().timeIntervalSince1970 * 1000)
+        else { return nil }
+        return HuntInsights.evaluate(reference: reference, analyzer: analyzer, setup: setup)
+    }
+
+    /// For the development server, which sees the app's state without the battle configuration:
+    /// it stands in with the setup of the account's latest recorded hunt.
+    public func insights(account: Int, huntId: Int, level: Double, analyzer: [String: Any]?) -> [String: Any]? {
+        queue.sync {
+            let setup = allRuns().first { $0.account == account && $0.summary["setup"] != nil }
+                .flatMap { ($0.summary["setup"] as? [String: Any])?.compactMapValues { $0 as? [String: Any] } } ?? [:]
+            return insights(account: account, huntId: huntId, level: level, analyzer: analyzer, setup: setup)
         }
     }
 }

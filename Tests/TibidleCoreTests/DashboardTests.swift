@@ -201,6 +201,43 @@ final class DashboardStoreTests: XCTestCase {
         XCTAssertEqual(DashboardRouter.respond(method: "GET", target: "/api/hunts/setup?id=\(newer)&compare=\(older)", store: store).status, 200)
     }
 
+    func testInsightsCompareWithTheBestRecentHuntAndItsSetup() {
+        let store = makeStore()
+        store.setAccountNames(["A", "B", "C", "D"])
+        func config(_ minimum: Int) -> String {
+            #"{"SORCERER":{"skills":["Energy Wave"],"minCreatures":{"Energy Wave":\#(minimum)}}}"#
+        }
+        func hunt(minimum: Int, seconds: Int, balance: Int, level: Int = 80, map: Int = 151) {
+            store.ingest(account: 1, json: #"{"type":"welcome","data":{"battleConfigs":\#(config(minimum))}}"#)
+            store.ingest(account: 1, json: #"{"type":"hunt_started","data":{"huntId":\#(map),"state":{"party":[{"name":"B","vocation":"SORCERER","level":80}]}}}"#)
+            clock += 60
+            store.ingest(account: 1, json: #"{"type":"ended","data":{"summary":{"huntId":\#(map),"elapsedSec":\#(seconds),"level":{"start":\#(level),"end":\#(level)},"balance":\#(balance)}}}"#)
+        }
+        hunt(minimum: 2, seconds: 7200, balance: 160_000)               // best: 80k/h
+        hunt(minimum: 3, seconds: 3600, balance: 50_000)
+        hunt(minimum: 2, seconds: 3600, balance: 999_999, level: 95)    // too far from the current level
+        hunt(minimum: 2, seconds: 3600, balance: 999_999, map: 7)       // another map
+        store.ingest(account: 1, json: #"{"type":"welcome","data":{"battleConfigs":\#(config(5))}}"#)
+        store.ingest(account: 1, json: #"{"type":"hunt_started","data":{"huntId":151,"state":{"character":{"level":81},"party":[{"name":"B","vocation":"SORCERER","level":81}]}}}"#)
+        store.ingest(account: 1, json: #"{"type":"frame","data":{"analyzer":{"elapsedMs":3600000,"lootGold":90000,"suppliesGold":50000}}}"#)
+
+        let state = object(store.stateJSON())
+        let insights = (state["accounts"] as! [[String: Any]])[1]["insights"] as! [String: Any]
+        XCTAssertEqual((insights["reference"] as! [String: Any])["profitPerHour"] as? Int, 80_000)
+        XCTAssertEqual(insights["profitPerHour"] as? Int, 40_000)
+        XCTAssertEqual(insights["drop"] as? Double, 0.5)
+        let changes = insights["changes"] as! [[String: Any]]
+        XCTAssertEqual(changes.first?["differences"] as? [String], ["Energy Wave: mínimo de criaturas de 2 para 5"])
+        let attention = state["attention"] as! [[String: Any]]
+        XCTAssertTrue(attention.contains { ($0["text"] as? String)?.contains("50% abaixo da sua melhor hunt recente aqui (80k/h") == true })
+
+        // Too early in the hunt to judge the rates: the comparison shows, the warning does not.
+        store.ingest(account: 1, json: #"{"type":"frame","data":{"analyzer":{"elapsedMs":600000,"lootGold":1,"suppliesGold":50000}}}"#)
+        let early = object(store.stateJSON())
+        XCTAssertNil(((early["accounts"] as! [[String: Any]])[1]["insights"] as! [String: Any])["drop"])
+        XCTAssertFalse((early["attention"] as! [[String: Any]]).contains { $0["kind"] as? String == "setup" })
+    }
+
     func testRejectsInvalidInput() {
         let store = makeStore()
         store.ingest(account: 7, json: #"{"type":"welcome","data":{}}"#)

@@ -380,6 +380,25 @@ public enum DashboardPage {
             cell(r.hours.toLocaleString('pt-BR')))))));
     }
 
+    // The account's best recent hunt on this map and what changed in the battle setup since then.
+    function insights(a) {
+      const d = a.insights;
+      if (!d || !d.reference) return null;
+      const r = d.reference;
+      const box = el('div', { class: 'bestiary' }, el('div', { class: 'mhead' }, 'Comparado à sua melhor hunt recente aqui'));
+      const drop = d.drop != null && d.drop >= 0.2;
+      box.append(el('div', { class: 'madvice' }, `${dateTime(r.endedAt)} · nível ${r.levels} · ${r.hours.toLocaleString('pt-BR')}h · ${signed(r.profitPerHour)}/h`,
+        d.profitPerHour != null ? el('span', { class: drop ? 'warn-text' : '' },
+          ` → agora ${signed(d.profitPerHour)}/h${d.drop != null ? ` (${d.drop > 0 ? '−' : '+'}${Math.round(Math.abs(d.drop) * 100)}%)` : ''}`) : null));
+      const changes = d.changes || [];
+      if (!changes.length) box.append(el('div', { class: 'madvice' }, 'Mesmo setup de batalha daquela hunt.'));
+      for (const c of changes) {
+        box.append(el('div', { class: 'madvice' }, el('b', null, `${c.label} mudou: `), c.differences.join(' · ')));
+      }
+      if (drop && changes.length) box.append(el('div', { class: 'alert warn' }, 'O lucro caiu e o setup é outro: comece revertendo essas mudanças (Hunts recentes → Setup desta hunt mostra o setup completo daquela hunt).'));
+      return box;
+    }
+
     let openSkills = null;
     function skillsButton(a) {
       const d = a.skills;
@@ -545,6 +564,8 @@ public enum DashboardPage {
         const when = inv.next.live ? 'em andamento' : `começa às ${time(inv.next.startAt)} (${until(inv.next.startAt)})`;
         node.append(el('div', { class: 'note' }, `${inv.name}${inv.boss ? ` · ${inv.boss}` : ''}: ${inv.joined ? 'inscrito' : 'não inscrito'} · ${when}`));
       }
+      const ins = insights(a);
+      if (ins) node.append(ins);
       const bm = benchmark(a);
       if (bm) node.append(bm);
       const be = bestiary(a);

@@ -62,6 +62,15 @@ public enum Attention {
                 items.append(AttentionItem(key: "\(kind)|\(i)|\(alert["level"] ?? "")", account: i, kind: kind,
                                            level: alert["level"] ?? "warn", text: "\(label): \(text)", notify: alert["level"] == "bad"))
             }
+            if status == "hunting", let insights = entry["insights"] as? [String: Any], let drop = insights["drop"] as? Double,
+               drop >= HuntInsights.dropWarning, let reference = insights["reference"] as? [String: Any],
+               let changes = insights["changes"] as? [[String: Any]], !changes.isEmpty {
+                let who = changes.compactMap { $0["label"] as? String }.joined(separator: ", ")
+                items.append(AttentionItem(key: "setup-drop|\(i)|\(reference["id"] ?? "")", account: i, kind: "setup", level: "warn",
+                                           text: "\(label): lucro/h \(Int((drop * 100).rounded()))% abaixo da sua melhor hunt recente aqui " +
+                                                 "(\(money(reference["profitPerHour"]))/h, \(day(number(reference["endedAt"])))) e o setup mudou desde então (\(who)).",
+                                           notify: true))
+            }
             if status != "hunting", let summary = entry["lastSummary"] as? [String: Any],
                let reason = summary["reason"] as? String, let (level, what) = badReasons[reason] {
                 let endedAt = number(summary["endedAt"])
@@ -88,6 +97,19 @@ public enum Attention {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: Date(timeIntervalSince1970: ms / 1000))
+    }
+
+    private static func day(_ ms: Double) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd/MM HH:mm"
+        return formatter.string(from: Date(timeIntervalSince1970: ms / 1000))
+    }
+
+    static func money(_ value: Any?) -> String {
+        let n = number(value)
+        if abs(n) >= 1_000_000 { return String(format: "%.1fkk", n / 1_000_000).replacingOccurrences(of: ".", with: ",") }
+        if abs(n) >= 1000 { return "\(Int((n / 1000).rounded()))k" }
+        return "\(Int(n.rounded()))"
     }
 
     private static func number(_ value: Any?) -> Double {
