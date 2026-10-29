@@ -17,6 +17,12 @@ public struct AttentionItem: Equatable {
 public enum Attention {
     static let endedWindow: Double = 60 * 60 * 1000
     static let idleAfter: Double = 15 * 60 * 1000
+    /// Below this share of normal damage a spell is the wrong element for the hunt.
+    static let weakElement = 0.5
+    /// A member averaging less mana than this spends the hunt unable to cast (or drinking potions).
+    static let starvedMana = 0.10
+    static let elements = ["COMBAT_PHYSICALDAMAGE": "físico", "COMBAT_FIREDAMAGE": "fogo", "COMBAT_ENERGYDAMAGE": "energia",
+                           "COMBAT_EARTHDAMAGE": "terra", "COMBAT_ICEDAMAGE": "gelo", "COMBAT_HOLYDAMAGE": "sagrado", "COMBAT_DEATHDAMAGE": "morte"]
     static let badReasons: [String: (String, String)] = [
         "death": ("bad", "morreu"), "no_gold": ("warn", "ficou sem gold"), "cap_full": ("warn", "terminou por mochila cheia"),
         "prey_resync_failed": ("warn", "falhou no prey"), "expired": ("info", "teve o tempo esgotado"),
@@ -71,6 +77,7 @@ public enum Attention {
                                                  "(\(money(reference["profitPerHour"]))/h, \(day(number(reference["endedAt"])))) e o setup mudou desde então (\(who)).",
                                            notify: true))
             }
+            if status == "hunting" { items += skillItems(entry, account: i, label: label) }
             if status != "hunting", let summary = entry["lastSummary"] as? [String: Any],
                let reason = summary["reason"] as? String, let (level, what) = badReasons[reason] {
                 let endedAt = number(summary["endedAt"])
@@ -91,6 +98,33 @@ public enum Attention {
         }
         let order = ["bad": 0, "warn": 1, "info": 2]
         return items.sorted { (order[$0.level] ?? 3, $0.account) < (order[$1.level] ?? 3, $1.account) }
+    }
+
+    /// From the skill analysis: spells the monsters resist that still fire, and members out of mana.
+    static func skillItems(_ entry: [String: Any], account i: Int, label: String) -> [AttentionItem] {
+        var items: [AttentionItem] = []
+        let members = (entry["skills"] as? [String: Any])?["members"] as? [[String: Any]] ?? []
+        let sameName = Set(members.compactMap { $0["name"] as? String }).count <= 1
+        for member in members {
+            let vocation = BattlePreset.vocationLabel(member["vocation"] as? String ?? "")
+            let who = sameName ? vocation : "\(member["name"] as? String ?? "") (\(vocation))"
+            for skill in member["skills"] as? [[String: Any]] ?? [] {
+                let multiplier = number(skill["multiplier"])
+                guard multiplier < weakElement, number(skill["dps"]) > 0, let name = skill["name"] as? String else { continue }
+                let element = elements[skill["element"] as? String ?? ""].map { " (\($0))" } ?? ""
+                items.append(AttentionItem(key: "element|\(i)|\(vocation)|\(name)", account: i, kind: "element", level: "warn",
+                                           text: "\(label) · \(who): \(name)\(element) causa só \(Int((multiplier * 100).rounded()))% do dano nos monstros desta hunt " +
+                                                 "e ainda gasta a vez e a mana de outra skill — troque por uma de outro elemento (veja a Análise de skills).",
+                                           notify: false))
+            }
+            if let average = member["manaAverage"] as? Double, average < starvedMana, number(member["manaPerMinute"]) > 0 {
+                items.append(AttentionItem(key: "mana|\(i)|\(vocation)", account: i, kind: "mana", level: "warn",
+                                           text: "\(label) · \(who) passa a hunt com \(Int((average * 100).rounded()))% de mana em média: as skills falham por falta de mana " +
+                                                 "e as poções de mana pesam nos supplies. Tire a skill mais cara ou suba o mínimo de criaturas dela.",
+                                           notify: false))
+            }
+        }
+        return items
     }
 
     private static func clock(_ ms: Double) -> String {

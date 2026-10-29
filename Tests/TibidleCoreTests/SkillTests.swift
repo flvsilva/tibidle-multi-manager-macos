@@ -240,3 +240,20 @@ final class ManaBudgetTests: XCTestCase {
         XCTAssertNil((members[1]["suggestions"] as! [[String: Any]])[0]["manaLimited"], "a member with mana to spare is not flagged")
     }
 }
+
+final class SkillAttentionTests: XCTestCase {
+    func testWarnsAboutResistedSpellsThatFireAndMembersOutOfMana() {
+        let entry: [String: Any] = ["skills": ["members": [
+            ["name": "Crovax", "vocation": "SORCERER", "manaAverage": 0.06, "manaPerMinute": 3075, "skills": [
+                ["name": "Great Fire Wave", "element": "COMBAT_FIREDAMAGE", "multiplier": 0.15, "dps": 16.5],
+                ["name": "sudden death rune", "element": "COMBAT_DEATHDAMAGE", "multiplier": 0.2, "dps": 0],   // never fires: no warning
+                ["name": "Energy Wave", "element": "COMBAT_ENERGYDAMAGE", "multiplier": 1.1, "dps": 92]]],
+            ["name": "Crovax", "vocation": "KNIGHT", "manaAverage": 0.16, "manaPerMinute": 4610, "skills": []],
+            ["name": "Crovax", "vocation": "DRUID", "manaAverage": 0.02, "manaPerMinute": 0, "skills": []],   // spends no mana on attacks
+        ]]]
+        let items = Attention.skillItems(entry, account: 1, label: "Crovax")
+        XCTAssertEqual(items.map(\.kind), ["element", "mana"])
+        XCTAssertTrue(items[0].text.hasPrefix("Crovax · Sorcerer: Great Fire Wave (fogo) causa só 15% do dano"))
+        XCTAssertTrue(items[1].text.contains("Sorcerer passa a hunt com 6% de mana em média"))
+    }
+}
