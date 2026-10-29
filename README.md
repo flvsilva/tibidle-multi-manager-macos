@@ -4,6 +4,8 @@ Aplicativo de comunidade para jogar [Tibidle](https://play.tibidle.com/) no macO
 
 Cada pessoa entra com suas próprias contas diretamente no site do jogo. Não há assinatura nem serviço próprio do gerenciador. Código aberto sob a [licença MIT](LICENSE).
 
+Contato: flv.silva@yahoo.com.br
+
 ## Recursos
 
 - Quatro abas com perfis de navegador separados (cookies e armazenamento isolados).
