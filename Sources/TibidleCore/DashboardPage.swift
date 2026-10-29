@@ -414,7 +414,14 @@ public enum DashboardPage {
         details.addEventListener('toggle', () => { if (details.open) openDetails.add(key); else openDetails.delete(key); });
         box.append(details);
       }
-      if (drop && changes.length) box.append(el('div', { class: 'alert warn' }, 'O lucro caiu e o setup é outro: comece revertendo essas mudanças (Hunts recentes → Setup desta hunt mostra o setup completo daquela hunt).'));
+      if (drop && changes.length) box.append(el('div', { class: 'alert warn' }, 'O lucro caiu e o setup é outro: comece revertendo essas mudanças.'));
+      const view = el('button', { class: 'pr-btn', type: 'button', style: { marginTop: '6px' } }, 'Ver setup completo daquela hunt / salvar como preset');
+      view.addEventListener('click', async () => {
+        let h = lastHunts.find((x) => x.id === r.id);
+        if (!h) { await refreshHunts(); h = lastHunts.find((x) => x.id === r.id); }
+        if (h) openSetup(h);
+      });
+      box.append(view);
       return box;
     }
 
@@ -1036,7 +1043,18 @@ public enum DashboardPage {
             ? el('div', null, el('b', null, 'O que mudou em relação à outra hunt'), el('ul', { style: { margin: '4px 0 0', paddingLeft: '18px' } }, diff.map((d) => el('li', null, d))))
             : 'Igual à outra hunt.'));
         }
-        if ((v.steps || []).length) box.append(el('ol', { style: { margin: '8px 0 0', paddingLeft: '20px', fontSize: '12px' } }, v.steps.map((x) => el('li', null, x))));
+        if ((v.steps || []).length) {
+          box.append(el('ol', { style: { margin: '8px 0 0', paddingLeft: '20px', fontSize: '12px' } }, v.steps.map((x) => el('li', null, x))));
+          const msg = el('span', { class: 'madvice' });
+          const save = el('button', { class: 'pr-btn', type: 'button' }, 'Salvar como preset');
+          save.addEventListener('click', async () => {
+            try {
+              const res = await post('/api/presets/from-hunt', { id: h.id, vocation: v.vocation });
+              msg.textContent = res.ok ? ' Salvo na biblioteca de presets.' : ` ${res.error || 'Não foi possível salvar.'}`;
+            } catch (e) { msg.textContent = ` ${e.message}`; }
+          });
+          box.append(el('div', { class: 'pr-row', style: { marginTop: '6px' } }, save, msg));
+        }
         parts.push(box);
       }
       parts.push(el('div', { class: 'sk-foot' }, 'O setup é o que o app leu ao abrir o jogo ou retomar a hunt. Se você mudou a configuração no meio da hunt sem recarregar o jogo, a mudança não aparece aqui.'));

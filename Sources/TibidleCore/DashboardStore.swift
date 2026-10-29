@@ -819,6 +819,23 @@ extension DashboardStore {
         }
     }
 
+    /// Saves the setup one vocation ran with in a finished hunt (e.g. the account's best one) to the library.
+    public func savePresetFromHunt(id: Int, vocation: String, name: String?) -> Result<Int, PresetError> {
+        queue.sync {
+            let base = SkillAdvisor.baseVocation(vocation).uppercased()
+            guard let run = allRuns().first(where: { $0.id == id }) else { return .failure(.message("Hunt não encontrada.")) }
+            guard let config = (run.summary["setup"] as? [String: Any])?[base] as? [String: Any] else {
+                return .failure(.message("Esta hunt não guardou o setup do \(BattlePreset.vocationLabel(base)).")) }
+            let huntId = number(run.summary["huntId"]).map { Int($0) }
+            let title = huntId.map { catalog.hunt(id: $0)?.title ?? "Hunt #\($0)" } ?? ""
+            let preset = BattlePreset(vocation: base, huntId: huntId, huntTitle: title, config: config)
+            guard !(preset.config["skills"] as? [Any] ?? []).compactMap({ $0 as? String }).isEmpty else {
+                return .failure(.message("O setup desta hunt está sem skills de ataque."))
+            }
+            return insertPreset(preset, name: cleanName(name) ?? BattlePreset.defaultName(huntTitle: title, vocation: base))
+        }
+    }
+
     /// Differences from the account's current configuration, validation and the modeled damage of both.
     public func presetComparison(id: Int, account: Int) -> Data {
         queue.sync {

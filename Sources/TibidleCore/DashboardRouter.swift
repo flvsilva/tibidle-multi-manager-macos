@@ -117,6 +117,9 @@ public enum DashboardRouter {
         case "/api/presets/save":
             guard let account = body["account"] as? Int, let vocation = body["vocation"] as? String else { return text(400, "Parâmetros inválidos") }
             return reply(store.savePreset(account: account, vocation: vocation, name: body["name"] as? String))
+        case "/api/presets/from-hunt":
+            guard let id = body["id"] as? Int, let vocation = body["vocation"] as? String else { return text(400, "Parâmetros inválidos") }
+            return reply(store.savePresetFromHunt(id: id, vocation: vocation, name: body["name"] as? String))
         case "/api/presets/import":
             guard let value = body["text"] as? String else { return text(400, "Parâmetros inválidos") }
             return reply(store.importPreset(text: value, name: body["name"] as? String))

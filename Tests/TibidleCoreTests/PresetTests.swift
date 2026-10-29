@@ -140,6 +140,18 @@ final class PresetTests: XCTestCase {
         XCTAssertEqual(lan["canWrite"] as? Bool, false)
     }
 
+    func testSavesTheSetupOfAFinishedHunt() {
+        let store = makeStore()
+        store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":10,"elapsedSec":3600,"balance":1}}}"#)
+        let id = (json(store.huntsJSON(limit: 1))["hunts"] as! [[String: Any]])[0]["id"] as! Int
+        guard case .success = store.savePresetFromHunt(id: id, vocation: "Elder Druid", name: nil) else { return XCTFail("save failed") }
+        let saved = (json(store.presetsJSON(canWrite: true))["presets"] as! [[String: Any]])[0]
+        XCTAssertEqual(saved["name"] as? String, "Dragon Lair · Druid")
+        XCTAssertTrue((saved["steps"] as! [String]).contains("Ataque 1: Ice Strike — usar com 2 criaturas ou mais"))
+        XCTAssertEqual(store.savePresetFromHunt(id: id, vocation: "KNIGHT", name: nil), .failure(.message("Esta hunt não guardou o setup do Knight.")))
+        XCTAssertEqual(store.savePresetFromHunt(id: 999, vocation: "DRUID", name: nil), .failure(.message("Hunt não encontrada.")))
+    }
+
     func testComparisonShowsDifferencesStepsAndWarnings() {
         let store = makeStore()
         store.setSpellCatalog(SpellCatalog(json: Data(SkillTests.spellsJSON.utf8))!)
