@@ -38,11 +38,39 @@ public enum CollectorScript {
       };
       const pickList = (list, keys) => Array.isArray(list) ? list.slice(0, 4).map((o) => pick(o, keys)) : undefined;
       const num = (v) => typeof v === 'number' && isFinite(v) ? v : undefined;
-      // Combat numbers only (skill levels, equipped spell names/cooldowns, weapon attack): no items or ids.
+      // Combat numbers (skill levels, equipped spell names/cooldowns, weapon attack, gear stats): no ids.
       const weaponAttack = (eq) => {
         const w = isObject(eq) ? eq.weapon : undefined;
         if (!isObject(w)) return undefined;
         return num(isObject(w.attrs) ? w.attrs.attack : undefined) ?? num(w.attack);
+      };
+      // Gear, for the equipment analysis: per slot, the item's name and its numeric stats (armor, defense, attack,
+      // bonuses, tier…) plus the names of its fields; nothing that looks like an id, no strings but a few labels.
+      const ID = /^id$|Id$|_id$|^uid|uuid|guid|owner|serial|token/i;
+      const LABELS = ['rarity', 'tier', 'quality', 'type', 'slot', 'element', 'grade'];
+      const stats = (o, out, prefix) => {
+        if (!isObject(o)) return;
+        for (const [k, v] of Object.entries(o).slice(0, 40)) {
+          if (ID.test(k)) continue;
+          if (num(v) !== undefined) out[prefix + k.slice(0, 32)] = v;
+          else if (LABELS.includes(k) && typeof v === 'string') out[prefix + k] = v.slice(0, 24);
+        }
+      };
+      const fields = (o) => isObject(o) ? Object.keys(o).filter((k) => !ID.test(k)).slice(0, 30).map((k) => k.slice(0, 32)) : undefined;
+      const gear = (eq) => {
+        if (!isObject(eq)) return undefined;
+        const out = {};
+        for (const slot of Object.keys(eq).slice(0, 14)) {
+          const item = eq[slot];
+          if (!isObject(item)) continue;
+          const st = {};
+          stats(item, st, '');
+          stats(item.attrs, st, 'attrs.');
+          for (const key of ['bonus', 'bonuses', 'attributes', 'stats', 'refine', 'imbuements']) stats(item[key], st, key + '.');
+          out[slot.slice(0, 24)] = { name: typeof item.name === 'string' ? item.name.slice(0, 64) : undefined, stats: st,
+                                     fields: fields(item), attrFields: fields(item.attrs) };
+        }
+        return out;
       };
       const member = (m) => {
         if (!isObject(m)) return undefined;
@@ -53,6 +81,7 @@ public enum CollectorScript {
           magic: num(isObject(sk.magic) ? sk.magic.value : undefined),
         };
         out.weaponAttack = weaponAttack(m.equipment);
+        out.gear = gear(m.equipment);
         out.kit = Array.isArray(m.kit) ? m.kit.slice(0, 24).map((k) => pick(k, ['name', 'mana', 'cooldownMs'])) : [];
         return out;
       };

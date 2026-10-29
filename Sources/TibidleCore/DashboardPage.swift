@@ -658,6 +658,18 @@ public enum DashboardPage {
         node.append(el('div', { class: 'madvice' }, 'HP média na hunt: ', hp.map((m, i) => el('span', { class: m.hpAverage < 0.8 ? 'warn-text' : '' },
           `${i ? ' · ' : ''}${vocation(m.vocation)} ${Math.round(m.hpAverage * 100)}%${m.hpLowest < 0.6 ? ` (mín. ${Math.round(m.hpLowest * 100)}%)` : ''}`))));
       }
+      const geared = (party || []).filter((m) => m.gear && Object.keys(m.gear).length);
+      if (geared.length) {
+        const key = `gear-${a.index}`;
+        const statText = (st) => Object.entries(st || {}).filter(([, v]) => typeof v === 'number' && v !== 0)
+          .map(([k, v]) => `${k.replace(/^attrs\./, '')} ${v}`).slice(0, 6).join(', ');
+        const details = el('details', openDetails.has(key) ? { open: '' } : null, el('summary', { class: 'madvice' }, 'Equipamento da party'),
+          geared.map((m) => el('div', { class: 'madvice' }, el('b', null, `${vocation(m.vocation)} ${m.level || ''}`),
+            el('ul', { style: { margin: '2px 0 4px', paddingLeft: '18px' } }, Object.entries(m.gear).map(([slot, item]) =>
+              el('li', null, `${slot}: ${item.name || '—'}`, statText(item.stats) ? el('span', { class: 'muted-text' }, ` · ${statText(item.stats)}`) : null))))));
+        details.addEventListener('toggle', () => { if (details.open) openDetails.add(key); else openDetails.delete(key); });
+        node.append(details);
+      }
       if (a.offline && num(a.offline.elapsedMs) > 0) {
         node.append(el('div', { class: 'note' },
           `Enquanto o app estava fechado (${duration(a.offline.elapsedMs)}): +${fmt(a.offline.xp)} XP · ${fmt(a.offline.killsTotal)} kills · ${fmt(a.offline.lootGold)} gold de loot`));

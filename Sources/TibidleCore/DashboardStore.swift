@@ -181,6 +181,13 @@ public final class DashboardStore {
                     var out: [String: Any] = ["name": name, "vocation": vocation,
                                               "level": number(member["level"]) ?? 0, "suppliesGold": number(member["suppliesGold"]) ?? 0]
                     if let h = health[VitalsTracker.key(name: name, vocation: vocation)] { out["hpAverage"] = h.average; out["hpLowest"] = h.lowest }
+                    // The gear it ran with (name and stats per slot), to compare hunts and accounts later.
+                    if let gear = member["gear"] as? [String: Any] {
+                        out["gear"] = gear.compactMapValues { item -> [String: Any]? in
+                            guard let item = item as? [String: Any] else { return nil }
+                            return ["name": item["name"] ?? NSNull(), "stats": item["stats"] ?? [:]]
+                        }
+                    }
                     return out
                 }
             }

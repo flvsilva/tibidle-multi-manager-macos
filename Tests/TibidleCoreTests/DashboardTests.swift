@@ -57,6 +57,27 @@ final class CollectorScriptTests: XCTestCase {
         XCTAssertEqual((resume["analyzer"] as! [String: Any])["xpPerHour"] as? Int, 50)
     }
 
+    func testForwardsGearNamesAndStatsWithoutIds() {
+        let (context, posts) = makeContext()
+        context.evaluateScript("""
+            var ws = new WebSocket('wss://play.tibidle.com/ws');
+            ws.receive(JSON.stringify({ type: 'frame', data: { state: { party: [{ name: 'Zolp', vocation: 'KNIGHT', equipment: {
+              weapon: { id: 3001, uid: 'secret-uid', name: 'war hammer', tier: 2, attrs: { attack: 45, defense: 10, ownerId: 'secret-owner' } },
+              armor: { itemId: 77, name: 'knight armor', rarity: 'rare', note: 'free text', attrs: { armor: 12 }, bonuses: { maxHealth: 80 } },
+              ring: null } }] } } }));
+            """)
+        let member = (((posts()[0]["data"] as! [String: Any])["state"] as! [String: Any])["party"] as! [[String: Any]])[0]
+        XCTAssertEqual(member["weaponAttack"] as? Int, 45)
+        let gear = member["gear"] as! [String: [String: Any]]
+        XCTAssertEqual(Set(gear.keys), ["weapon", "armor"])
+        XCTAssertEqual(gear["weapon"]?["name"] as? String, "war hammer")
+        XCTAssertEqual(gear["weapon"]?["stats"] as? [String: Int], ["tier": 2, "attrs.attack": 45, "attrs.defense": 10])
+        XCTAssertEqual(gear["armor"]?["stats"] as? [String: AnyHashable], ["rarity": "rare", "attrs.armor": 12, "bonuses.maxHealth": 80])
+        XCTAssertEqual(gear["armor"]?["fields"] as? [String], ["name", "rarity", "note", "attrs", "bonuses"])
+        let text = String(data: try! JSONSerialization.data(withJSONObject: member), encoding: .utf8)!
+        for forbidden in ["secret", "3001", "77", "free text"] { XCTAssertFalse(text.contains(forbidden), "\(forbidden) leaked") }
+    }
+
     func testForwardsInvasionScheduleOnly() {
         let (context, posts) = makeContext()
         context.evaluateScript("""
@@ -257,7 +278,7 @@ final class DashboardStoreTests: XCTestCase {
         store.ingest(account: 0, json: #"{"type":"hunt_started","data":{"huntId":151}}"#)
         for hp in [100, 40] {
             for _ in 0..<10 {
-                store.ingest(account: 0, json: #"{"type":"frame","data":{"state":{"party":[{"name":"Zolp","vocation":"KNIGHT","hp":\#(hp),"maxHp":100,"suppliesGold":5}]}}}"#)
+                store.ingest(account: 0, json: #"{"type":"frame","data":{"state":{"party":[{"name":"Zolp","vocation":"KNIGHT","hp":\#(hp),"maxHp":100,"suppliesGold":5,"gear":{"armor":{"name":"knight armor","stats":{"attrs.armor":12},"fields":["name","attrs"]}}}]}}}"#)
             }
         }
         let live = ((object(store.stateJSON())["accounts"] as! [[String: Any]])[0]["state"] as! [String: Any])["party"] as! [[String: Any]]
@@ -265,6 +286,8 @@ final class DashboardStoreTests: XCTestCase {
         store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":151,"elapsedSec":60,"killsTotal":100,"damageTaken":25000}}}"#)
         let member = ((object(store.huntsJSON(limit: 1))["hunts"] as! [[String: Any]])[0]["members"] as! [[String: Any]])[0]
         XCTAssertEqual(member["hpLowest"] as? Double, 0.4)
+        XCTAssertEqual((member["gear"] as? [String: [String: Any]])?["armor"]?["name"] as? String, "knight armor")
+        XCTAssertNil((member["gear"] as? [String: [String: Any]])?["armor"]?["fields"], "field names are only for the live view")
         XCTAssertEqual(HuntInsights.takenPerKill(["killsTotal": 100, "damageTaken": 25000]), 250)
     }
 
