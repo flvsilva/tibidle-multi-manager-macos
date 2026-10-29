@@ -173,6 +173,9 @@ public enum DashboardPage {
     th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
     th { color: var(--muted); font-weight: 500; font-size: 12px; }
     td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+    td.neg-cell { color: var(--bad-text); font-weight: 600; }
+    .cmp-group + .cmp-group { margin-top: 16px; }
+    .cmp-group h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
     td .swatch { display: inline-block; margin-right: 6px; vertical-align: 0; }
     @media (max-width: 520px) { main { padding: 14px 16px 40px; } .summary b { font-size: 17px; } td.clip { max-width: 140px; } .hero b { font-size: 21px; } .stats { grid-template-columns: repeat(2, 1fr); } }
     @media (forced-colors: active) { .swatch, .legend i, .status i { forced-color-adjust: none; } }
@@ -201,6 +204,11 @@ public enum DashboardPage {
       <div class="summary" id="summary"></div>
       <div class="attention" id="attention"></div>
       <div class="cards" id="cards"></div>
+
+      <section class="section" id="compare-section" hidden>
+        <div class="toolbar"><h2>Mesma hunt, lado a lado</h2></div>
+        <div id="compare"></div>
+      </section>
 
       <section class="section">
         <div class="toolbar">
@@ -512,6 +520,55 @@ public enum DashboardPage {
       return node;
     }
 
+    // ---- accounts on the same hunt, side by side ----
+    // better: which direction is good; cells 20%+ worse than the best account of the group turn red.
+    const COMPARE = [
+      ['Nível', (a) => num((a.state && a.state.character || {}).level || (a.account || {}).level), null, (v) => String(v || '—')],
+      ['Tempo', (a) => num(a.analyzer.elapsedMs), null, duration],
+      ['Lucro/h', (a) => perHour(num(a.analyzer.lootGold) - num(a.analyzer.suppliesGold), a.analyzer.elapsedMs), 'high', signed],
+      ['Loot/h', (a) => perHour(a.analyzer.lootGold, a.analyzer.elapsedMs), 'high', fmt],
+      ['Supplies/h', (a) => perHour(a.analyzer.suppliesGold, a.analyzer.elapsedMs), 'low', fmt],
+      ['XP/h', (a) => num(a.analyzer.xpPerHour), 'high', fmt],
+      ['Kills/h', (a) => perHour(a.analyzer.killsTotal, a.analyzer.elapsedMs), 'high', fmt],
+      ['Dano causado/h', (a) => perHour(a.analyzer.damageDealt, a.analyzer.elapsedMs), 'high', fmt],
+      ['Dano recebido/h', (a) => perHour(a.analyzer.damageTaken, a.analyzer.elapsedMs), 'low', fmt],
+      ['Cura/h', (a) => perHour(a.analyzer.healingDone, a.analyzer.elapsedMs), null, fmt],
+    ];
+    const COMPARE_MIN_MS = 10 * 60000;
+    function renderCompare(accounts) {
+      const groups = new Map();
+      for (const a of accounts) {
+        if (a.status !== 'hunting' || a.training || !a.analyzer || a.huntId == null) continue;
+        if (!groups.has(a.huntId)) groups.set(a.huntId, []);
+        groups.get(a.huntId).push(a);
+      }
+      const shown = [...groups.values()].filter((g) => g.length >= 2);
+      $('compare-section').hidden = !shown.length;
+      if (!shown.length) { $('compare').replaceChildren(); return; }
+      $('compare').replaceChildren(...shown.map((group) => {
+        const title = (group[0].daily && group[0].daily.currentHunt && group[0].daily.currentHunt.title) || `Hunt #${group[0].huntId}`;
+        const ranked = group.filter((a) => num(a.analyzer.elapsedMs) >= COMPARE_MIN_MS);
+        const rows = COMPARE.map(([label, value, better, format]) => {
+          const values = group.map(value);
+          const pool = ranked.map(value);
+          const best = !better || pool.length < 2 ? null : better === 'high' ? Math.max(...pool) : Math.min(...pool);
+          return el('tr', null, el('th', null, label), group.map((a, i) => {
+            const v = values[i];
+            const bad = best !== null && ranked.includes(a) &&
+              (better === 'high' ? v < best - Math.abs(best) * 0.2 : v > best * 1.2);
+            return el('td', { class: 'n' + (bad ? ' neg-cell' : '') }, format(v));
+          }));
+        });
+        return el('div', { class: 'cmp-group' }, el('h3', null, title),
+          el('div', { class: 'table-wrap' }, el('table', null,
+            el('thead', null, el('tr', null, el('th', null, ''), group.map((a) => el('th', { class: 'n' },
+              el('span', { class: 'swatch', style: { background: SERIES[a.index], display: 'inline-block', marginRight: '6px' } }), a.label)))),
+            el('tbody', null, rows))),
+          el('div', { class: 'sk-foot', style: { marginTop: '6px' } },
+            'Em vermelho: 20% ou mais pior que a melhor conta desta hunt. Contas com menos de 10 min de hunt não entram na comparação.'));
+      }));
+    }
+
     // ---- battle presets (local library; writes only work from this Mac) ----
     let presetData = null, presetMsg = null;
     const post = async (path, body) => {
@@ -619,6 +676,7 @@ public enum DashboardPage {
         lastAccounts = data.accounts;
         renderSummary(data);
         $('cards').replaceChildren(...data.accounts.map(card));
+        renderCompare(data.accounts);
         $('meta').textContent = `Atualizado às ${new Date(data.generatedAt).toLocaleTimeString('pt-BR')}`;
         renderLegend();
         renderSkillsModal();
