@@ -168,6 +168,13 @@ public final class DashboardStore {
             guard var summary = data["summary"] as? [String: Any] else { break }
             summary["endedAt"] = date.timeIntervalSince1970 * 1000
             summary["characters"] = characterNames(entry)
+            if let party = (entry["state"] as? [String: Any])?["party"] as? [[String: Any]], !party.isEmpty {
+                // Who spent the supplies (the last frame before the end holds the hunt's totals per member).
+                summary["members"] = party.map { member -> [String: Any] in
+                    ["name": member["name"] as? String ?? "", "vocation": member["vocation"] as? String ?? "",
+                     "level": number(member["level"]) ?? 0, "suppliesGold": number(member["suppliesGold"]) ?? 0]
+                }
+            }
             entry["lastSummary"] = summary
             recordCalibration(account: account, summary: summary, at: date)
             // Until the next welcome refreshes the server's counters, fold the finished hunt in locally.

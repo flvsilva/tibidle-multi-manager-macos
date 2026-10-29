@@ -62,6 +62,11 @@ public enum DashboardPage {
     .pos { color: var(--good-text); } .neg { color: var(--bad-text); }
     .party { margin-top: 10px; display: grid; gap: 5px; }
     .member { display: grid; grid-template-columns: minmax(0, 1fr) 70px; gap: 2px 8px; font-size: 12px; align-items: center; }
+    .with-supplies .member { grid-template-columns: minmax(0, 1fr) minmax(96px, 120px) 70px; }
+    .share { display: grid; gap: 2px; font-size: 11px; font-variant-numeric: tabular-nums; }
+    .share .bar { height: 4px; }
+    .share span { color: var(--muted); text-align: right; }
+    .share span.warn-text { color: var(--warn-text); font-weight: 600; }
     .member span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
     .bars { display: grid; gap: 2px; }
     .bar { height: 4px; border-radius: 2px; background: var(--grid); overflow: hidden; }
@@ -526,8 +531,13 @@ public enum DashboardPage {
       if (daily) node.append(daily);
       const party = state.party || (a.status !== 'hunting' ? a.roster : null);
       if (party && party.length) {
-        node.append(el('div', { class: 'party' }, party.map((m) => el('div', { class: 'member' },
-          el('span', null, `${m.name || ''} · ${vocation(m.vocation)} ${m.level || ''}`),
+        // Who spends the supplies: one member taking most of it points at that member's heal/potion setup.
+        const sameName = party.length > 1 && party.every((m) => m.name === party[0].name);
+        const spent = a.status === 'hunting' ? party.reduce((sum, m) => sum + num(m.suppliesGold), 0) : 0;
+        if (spent > 0) node.append(el('div', { class: 'mhead', style: { marginTop: '12px' } }, 'Party · parte dos supplies na hunt'));
+        node.append(el('div', { class: 'party' + (spent > 0 ? ' with-supplies' : '') }, party.map((m) => el('div', { class: 'member' },
+          el('span', { title: m.name || '' }, sameName ? `${vocation(m.vocation)} ${m.level || ''}` : `${m.name || ''} · ${vocation(m.vocation)} ${m.level || ''}`),
+          spent > 0 ? supplyShare(num(m.suppliesGold), spent, party.length) : null,
           m.maxHp ? el('div', { class: 'bars' },
             el('div', { class: 'bar', title: `HP ${m.hp}/${m.maxHp}` }, el('div', { style: { width: `${Math.max(0, Math.min(100, 100 * num(m.hp) / num(m.maxHp)))}%`, background: 'var(--good)' } })),
             num(m.maxMana) > 0 ? el('div', { class: 'bar', title: `Mana ${m.mana}/${m.maxMana}` }, el('div', { style: { width: `${Math.max(0, Math.min(100, 100 * num(m.mana) / num(m.maxMana)))}%`, background: 'var(--s0)' } })) : null)
@@ -587,6 +597,14 @@ public enum DashboardPage {
           el('div', { class: 'sk-foot', style: { marginTop: '6px' } },
             'Em vermelho: 20% ou mais pior que a melhor conta desta hunt. Contas com menos de 10 min de hunt não entram na comparação.'));
       }));
+    }
+
+    function supplyShare(value, total, members) {
+      const share = total > 0 ? value / total : 0;
+      const heavy = members > 1 && share >= 0.5;
+      return el('div', { class: 'share', title: `${fmt(value)} gold em supplies (${Math.round(share * 100)}% da party)` },
+        el('div', { class: 'bar' }, el('div', { style: { width: `${100 * share}%`, background: heavy ? 'var(--warning)' : 'var(--s0)' } })),
+        el('span', { class: heavy ? 'warn-text' : '' }, `${Math.round(share * 100)}% · ${fmt(value)}`));
     }
 
     // ---- battle presets (local library; writes only work from this Mac) ----
@@ -865,7 +883,11 @@ public enum DashboardPage {
         item('Mortes', num(h.deaths) ? `${fmt(h.deaths)}${h.deathCause ? ` (${h.deathCause})` : ''}` : '0'),
         item('Personagens', (h.characters || []).join(', ') || '—'),
       ];
+      const members = (h.members || []).filter((m) => num(m.suppliesGold) > 0);
+      const spent = members.reduce((sum, m) => sum + num(m.suppliesGold), 0);
       const tr = el('tr', { class: 'detail', hidden: '' }, el('td', { colspan: '13' }, el('div', { class: 'detail-grid' }, cells),
+        spent > 0 ? el('div', { style: { marginTop: '6px' } }, 'Supplies por membro: ' + members.slice().sort((x, y) => num(y.suppliesGold) - num(x.suppliesGold))
+          .map((m) => `${vocation(m.vocation)} ${Math.round(100 * num(m.suppliesGold) / spent)}% (${fmt(m.suppliesGold)})`).join(' · ')) : null,
         el('div', { style: { marginTop: '6px' } }, 'Mais abatidos: ' + list(h.kills, 6)),
         el('div', null, 'Drops: ' + list(h.drops, 12))));
       h._detail = tr;

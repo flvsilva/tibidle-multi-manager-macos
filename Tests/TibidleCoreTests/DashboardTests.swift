@@ -138,6 +138,7 @@ final class DashboardStoreTests: XCTestCase {
         let hunts = object(store.huntsJSON(limit: 10))["hunts"] as! [[String: Any]]
         XCTAssertEqual(hunts.count, 1)
         XCTAssertEqual(hunts[0]["characters"] as? [String], ["Knight", "Druid"])
+        XCTAssertEqual((hunts[0]["members"] as? [[String: Any]])?.map { $0["name"] as? String }, ["Knight", "Druid"])
         XCTAssertEqual(hunts[0]["label"] as? String, "B")
         let after = (object(store.stateJSON())["accounts"] as! [[String: Any]])[1]
         XCTAssertEqual(after["status"] as? String, "city")
