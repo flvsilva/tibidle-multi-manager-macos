@@ -318,6 +318,11 @@ public enum DashboardPage {
     const dateTime = (ms) => new Date(ms).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
     const perHour = (value, ms) => num(ms) > 60000 ? num(value) / (num(ms) / 3600000) : 0;
     const topKills = (kills, n = 3) => Object.entries(kills || {}).sort((a, b) => b[1] - a[1]).slice(0, n);
+    // Efficiency ratios shared by the cards, the side-by-side table and the hunt details.
+    const ratio = (a, b) => num(b) > 0 ? num(a) / num(b) : null;
+    const orDash = (v, f) => v === null ? '—' : f(v);
+    const pct = (v) => `${Math.round(v * 100)}%`;
+    const perKXp = (profit, xp) => ratio(profit, num(xp) / 1000);
     const vocation = (v) => VOC[String(v || '').toLowerCase()] || v || '';
 
     const until = (ms) => {
@@ -503,7 +508,9 @@ public enum DashboardPage {
           stat('Loot', fmt(an.lootGold)), stat('Supplies', fmt(an.suppliesGold)), stat('Balance', signed(profit), profit >= 0 ? 'pos' : 'neg'),
           stat('Dano/h', fmt(perHour(an.damageDealt, elapsed))), stat('Recebido/h', fmt(perHour(an.damageTaken, elapsed))),
           stat('Cura/h', fmt(perHour(an.healingDone, elapsed))), stat('Lucro/kill', num(an.killsTotal) ? signed(profit / num(an.killsTotal)) : '—'),
-          stat('Kills/h', fmt(perHour(an.killsTotal, elapsed)))));
+          stat('Kills/h', fmt(perHour(an.killsTotal, elapsed))),
+          stat('Supplies/kill', orDash(ratio(an.suppliesGold, an.killsTotal), fmt)),
+          stat('Lucro/1k XP', orDash(perKXp(profit, an.xp), signed))));
         const drops = topKills(an.drops, 12).filter(([n]) => n.toLowerCase() !== 'gold coin').slice(0, 5);
         const kills = topKills(an.kills);
         if (kills.length) node.append(el('div', { class: 'monsters' }, 'Mais abatidos: ' + kills.map(([m, n]) => `${m} ×${fmt(n)}`).join(' · ')));
@@ -569,6 +576,9 @@ public enum DashboardPage {
       ['Dano causado/h', (a) => perHour(a.analyzer.damageDealt, a.analyzer.elapsedMs), 'high', fmt],
       ['Dano recebido/h', (a) => perHour(a.analyzer.damageTaken, a.analyzer.elapsedMs), 'low', fmt],
       ['Cura/h', (a) => perHour(a.analyzer.healingDone, a.analyzer.elapsedMs), null, fmt],
+      ['Supplies/kill', (a) => ratio(a.analyzer.suppliesGold, a.analyzer.killsTotal), 'low', (v) => orDash(v, fmt)],
+      ['Lucro/1k XP', (a) => perKXp(num(a.analyzer.lootGold) - num(a.analyzer.suppliesGold), a.analyzer.xp), 'high', (v) => orDash(v, signed)],
+      ['Cura ÷ recebido', (a) => ratio(a.analyzer.healingDone, a.analyzer.damageTaken), null, (v) => orDash(v, pct)],
     ];
     const COMPARE_MIN_MS = 10 * 60000;
     function renderCompare(accounts) {
@@ -586,11 +596,11 @@ public enum DashboardPage {
         const ranked = group.filter((a) => num(a.analyzer.elapsedMs) >= COMPARE_MIN_MS);
         const rows = COMPARE.map(([label, value, better, format]) => {
           const values = group.map(value);
-          const pool = ranked.map(value);
+          const pool = ranked.map(value).filter((v) => v !== null);
           const best = !better || pool.length < 2 ? null : better === 'high' ? Math.max(...pool) : Math.min(...pool);
           return el('tr', null, el('th', null, label), group.map((a, i) => {
             const v = values[i];
-            const bad = best !== null && ranked.includes(a) &&
+            const bad = best !== null && v !== null && ranked.includes(a) &&
               (better === 'high' ? v < best - Math.abs(best) * 0.2 : v > best * 1.2);
             return el('td', { class: 'n' + (bad ? ' neg-cell' : '') }, format(v));
           }));
@@ -889,6 +899,8 @@ public enum DashboardPage {
         item('Lucro/h', hours ? signed(bal / hours) : '—'), item('Lucro/kill', num(h.killsTotal) ? signed(bal / num(h.killsTotal)) : '—'),
         item('Kills', fmt(h.killsTotal)), item('Kills/h', hours ? fmt(num(h.killsTotal) / hours) : '—'),
         item('Dano recebido', fmt(h.damageTaken)), item('Cura', fmt(h.healingDone)),
+        item('Supplies/kill', orDash(ratio(h.suppliesGold, h.killsTotal), fmt)), item('Lucro/1k XP', orDash(perKXp(bal, h.xp), signed)),
+        item('Cura ÷ recebido', orDash(ratio(h.healingDone, h.damageTaken), pct)),
         item('Mortes', num(h.deaths) ? `${fmt(h.deaths)}${h.deathCause ? ` (${h.deathCause})` : ''}` : '0'),
         item('Personagens', (h.characters || []).join(', ') || '—'),
       ];
