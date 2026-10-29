@@ -218,17 +218,22 @@ public enum SkillAdvisor {
         let spells = kit.compactMap { context.spells.spell(named: $0) }
         guard !spells.isEmpty else { return Rotation() }
         let tick = max(500, spells.map(\.groupCooldownMs).min() ?? 2000)
+        // Damage per cast is constant over the simulation: evaluate formulas and resistances once per spell.
+        var multipliers: [String: Double] = [:]
+        let casts: [(spell: SpellCatalog.Spell, damage: Double)] = spells.compactMap { spell in
+            guard Double(context.crowd) >= Double(member.minCreatures[spell.name] ?? 1),
+                  let base = baseDamage(spell, member: member) else { return nil }
+            let targets = spell.area ? Double(min(context.crowd, max(1, spell.areaCells))) : 1
+            let multiplier = multipliers[spell.combatType] ?? context.weighted(spell.combatType).multiplier
+            multipliers[spell.combatType] = multiplier
+            return (spell, base * multiplier * targets)
+        }
         var ready: [String: Double] = [:]
         var rotation = Rotation()
         var time = 0.0, mana = 0.0
         while time < seconds * 1000 {
-            for spell in spells {
-                let need = Double(member.minCreatures[spell.name] ?? 1)
-                if Double(context.crowd) < need { continue }
+            for (spell, damage) in casts {
                 if (ready[spell.name] ?? 0) > time { continue }
-                guard let base = baseDamage(spell, member: member) else { continue }
-                let targets = spell.area ? Double(min(context.crowd, max(1, spell.areaCells))) : 1
-                let damage = base * context.weighted(spell.combatType).multiplier * targets
                 rotation.share[spell.name, default: 0] += damage
                 rotation.damagePerSecond += damage
                 mana += spell.mana
