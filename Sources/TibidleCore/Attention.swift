@@ -74,7 +74,7 @@ public enum Attention {
                 let who = changes.compactMap { $0["label"] as? String }.joined(separator: ", ")
                 items.append(AttentionItem(key: "setup-drop|\(i)|\(reference["id"] ?? "")", account: i, kind: "setup", level: "warn",
                                            text: "\(label): lucro/h \(Int((drop * 100).rounded()))% abaixo da sua melhor hunt recente aqui " +
-                                                 "(\(money(reference["profitPerHour"]))/h, \(day(number(reference["endedAt"])))) e o setup mudou desde então (\(who)).",
+                                                 "(\(money(reference["profitPerHour"]))/h, \(day(number(reference["endedAt"])))), com outro setup (\(who)).",
                                            notify: true))
             }
             if status == "hunting" { items += skillItems(entry, account: i, label: label) }
@@ -114,13 +114,13 @@ public enum Attention {
                 let element = elements[skill["element"] as? String ?? ""].map { " (\($0))" } ?? ""
                 items.append(AttentionItem(key: "element|\(i)|\(vocation)|\(name)", account: i, kind: "element", level: "warn",
                                            text: "\(label) · \(who): \(name)\(element) causa só \(Int((multiplier * 100).rounded()))% do dano nos monstros desta hunt " +
-                                                 "e ainda gasta a vez e a mana de outra skill — troque por uma de outro elemento (veja a Análise de skills).",
+                                                 "— troque por uma de outro elemento.",
                                            notify: false))
             }
             if let average = member["manaAverage"] as? Double, average < starvedMana, number(member["manaPerMinute"]) > 0 {
                 items.append(AttentionItem(key: "mana|\(i)|\(vocation)", account: i, kind: "mana", level: "warn",
-                                           text: "\(label) · \(who) passa a hunt com \(Int((average * 100).rounded()))% de mana em média: as skills falham por falta de mana " +
-                                                 "e as poções de mana pesam nos supplies. Tire a skill mais cara ou suba o mínimo de criaturas dela.",
+                                           text: "\(label) · \(who) passa a hunt com \(Int((average * 100).rounded()))% de mana em média — tire a skill mais cara " +
+                                                 "ou suba o mínimo de criaturas dela.",
                                            notify: false))
             }
         }

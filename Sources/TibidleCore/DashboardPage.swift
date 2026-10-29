@@ -132,10 +132,17 @@ public enum DashboardPage {
     .bstages .fill { height: 100%; background: linear-gradient(90deg, #a97a1c, #f0c23a); }
     .bstages.done .fill { background: linear-gradient(90deg, #2f7a4f, #5fd18a); }
     .bstages i { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--surface); }
-    .skills-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; margin-top: 10px; padding: 8px 10px;
-      font: inherit; font-size: 12px; color: var(--ink); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
-    .skills-btn:hover { border-color: var(--axis); }
-    .skills-btn span { color: var(--ink-2); }
+    .tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
+    .tools button { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; padding: 6px 9px; font: inherit; font-size: 12px;
+      color: var(--ink); text-align: left; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+    .tools button:hover { border-color: var(--axis); }
+    .tools button span { color: var(--ink-2); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tools button.warn { border-left: 3px solid var(--warning); }
+    .tools button.warn span { color: var(--warn-text); }
+    .panel-tabs { padding: 10px 16px 0; overflow-x: auto; }
+    .advice { margin: 4px 0 10px; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
+    .attention ul { margin: 2px 0 0; padding-left: 16px; display: grid; gap: 2px; }
+    #setup-modal { z-index: 60; }
     .modal { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.5); }
     .modal.open { display: flex; }
     .modal-box { width: min(760px, 100%); max-height: min(86vh, 900px); display: flex; flex-direction: column; background: var(--surface);
@@ -205,10 +212,11 @@ public enum DashboardPage {
         <div class="modal-body" id="setup-body"></div>
       </div>
     </div>
-    <div class="modal" id="skills-modal" role="dialog" aria-modal="true" aria-labelledby="skills-title">
+    <div class="modal" id="panel-modal" role="dialog" aria-modal="true" aria-labelledby="panel-title">
       <div class="modal-box">
-        <div class="modal-head"><h2 id="skills-title">Skills</h2><button type="button" id="skills-close" aria-label="Fechar">×</button></div>
-        <div class="modal-body" id="skills-body"></div>
+        <div class="modal-head"><h2 id="panel-title">Análise</h2><button type="button" id="panel-close" aria-label="Fechar">×</button></div>
+        <div class="panel-tabs"><div class="seg" id="panel-tabs"></div></div>
+        <div class="modal-body" id="panel-body"></div>
       </div>
     </div>
     <main>
@@ -453,17 +461,94 @@ public enum DashboardPage {
       return box;
     }
 
-    let openSkills = null;
-    function skillsButton(a) {
-      const d = a.skills;
-      if (!d || !d.members || !d.members.length) return null;
-      const total = d.members.reduce((sum, m) => sum + num(m.dps), 0);
-      const tips = d.members.reduce((sum, m) => sum + (m.suggestions || []).length, 0);
-      const btn = el('button', { class: 'skills-btn', type: 'button' }, el('b', null, 'Análise de skills'),
-        el('span', null, `~${fmt(total)}/s${tips ? ` · ${tips} sugest${tips > 1 ? 'ões' : 'ão'}` : ''}`));
-      btn.addEventListener('click', () => { openSkills = a.index; renderSkillsModal(); });
-      return btn;
+    // The card shows the essentials; the detail behind each topic opens in a per-account panel, one tab per topic.
+    let openPanel = null;
+    const TABS = [['hunt', 'Hunt'], ['level', 'Nível'], ['skills', 'Skills'], ['gear', 'Equipamento'], ['daily', 'Missões']];
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    function tools(a) {
+      const items = [];
+      const d = a.insights;
+      if (d && d.reference) {
+        const text = d.drop != null ? `${d.drop > 0 ? '−' : '+'}${Math.round(Math.abs(d.drop) * 100)}% vs. melhor` : 'vs. melhor recente';
+        items.push(['hunt', 'Hunt', text, d.drop != null && d.drop >= 0.2]);
+      } else if (a.benchmark || a.bestiary) items.push(['hunt', 'Hunt', 'histórico e bestiário', false]);
+      const p = a.levelPlan;
+      if (p) items.push(['level', `Nível ${p.next}`, p.etaMs ? `em ~${hm(p.etaMs)}` : `faltam ${kk(p.needed)} XP`, false]);
+      const sk = a.skills;
+      if (sk && sk.members && sk.members.length) {
+        const tips = sk.members.reduce((sum, m) => sum + (m.suggestions || []).length, 0);
+        const total = sk.members.reduce((sum, m) => sum + num(m.dps), 0);
+        items.push(['skills', 'Skills', tips ? plural(tips, 'sugestão', 'sugestões') : `~${fmt(total)} dano/s`, false]);
+      }
+      const advice = a.gearAdvice || [];
+      const party = (a.state || {}).party || [];
+      if (advice.length || party.some((m) => m.gear)) items.push(['gear', 'Equipamento', advice.length ? plural(advice.length, 'melhoria', 'melhorias') : 'ver itens', advice.length > 0]);
+      const dm = (a.daily || {}).missions || [];
+      if (dm.length) {
+        const done = dm.filter((m) => m.state === 'claimed' || m.state === 'ready').length;
+        const st = a.daily.streak || {};
+        items.push(['daily', 'Missões', `${done}/${dm.length} hoje${st.day ? ` · dia ${st.day}/7` : ''}`, !!st.atRisk]);
+      }
+      if (!items.length) return null;
+      return el('div', { class: 'tools' }, items.map(([tab, title, text, warn]) => {
+        const b = el('button', { type: 'button', class: warn ? 'warn' : '' }, el('b', null, title), el('span', null, text));
+        b.addEventListener('click', () => { openPanel = { index: a.index, tab }; renderPanel(); });
+        return b;
+      }));
     }
+    function kills(a, n) {
+      const list = topKills((a.analyzer || {}).kills).slice(0, n);
+      return list.length ? el('div', { class: 'monsters' }, 'Mais abatidos: ' + list.map(([m, k]) => `${m} ×${fmt(k)}`).join(' · ')) : null;
+    }
+    function drops(a) {
+      const list = topKills((a.analyzer || {}).drops, 12).filter(([n]) => n.toLowerCase() !== 'gold coin').slice(0, 8);
+      return list.length ? el('div', { class: 'monsters' }, 'Drops: ' + list.map(([m, k]) => `${m} ×${fmt(k)}`).join(' · ')) : null;
+    }
+    function gearBody(a) {
+      const advice = a.gearAdvice || [];
+      const party = ((a.state || {}).party || []).filter((m) => m.gear && Object.keys(m.gear).length);
+      const box = el('div');
+      if (advice.length) box.append(el('div', { class: 'mhead' }, 'Maiores melhorias'), el('ul', { class: 'advice' }, advice.map((g) => el('li', null, g.text))));
+      else box.append(el('div', { class: 'madvice' }, 'Nenhuma troca com ganho claro entre os itens que suas contas usam.'));
+      // Price, weight and slot counts say nothing about how the item fights.
+      const NOISE = new Set(['value', 'weight', 'imbuementslot']);
+      const SLOTS = ['head', 'armor', 'legs', 'boots', 'shield', 'weapon', 'necklace', 'ring'];
+      const order = (slot) => (SLOTS.indexOf(slot) + 1) || 99;
+      const statText = (st) => Object.entries(st || {}).map(([k, v]) => [k.replace(/^attrs\./, ''), v])
+        .filter(([k, v]) => typeof v === 'number' && v !== 0 && !NOISE.has(k)).map(([k, v]) => `${k} ${v}`).slice(0, 6).join(', ');
+      for (const m of party) {
+        const hp = m.hpAverage != null ? ` · HP média ${Math.round(m.hpAverage * 100)}%${m.hpLowest != null ? ` (mín. ${Math.round(m.hpLowest * 100)}%)` : ''}` : '';
+        box.append(el('div', { class: 'mhead', style: { marginTop: '10px' } }, `${vocation(m.vocation)} ${m.level || ''}${hp}`),
+          el('table', { class: 'mini' }, el('tbody', null, Object.entries(m.gear).sort(([x], [y]) => order(x) - order(y)).map(([slot, item]) => el('tr', null,
+            el('td', { class: 'muted-text' }, slot), el('td', null, item.name || '—'),
+            el('td', { class: 'muted-text', style: { whiteSpace: 'normal' } }, statText(item.stats)))))));
+      }
+      box.append(el('div', { class: 'sk-foot' }, 'Defesa: quem mais apanha (menor HP média) contra o melhor item que suas outras contas usam na mesma vocação. ' +
+        'Arma: o elemento da wand/rod contra os monstros desta hunt.'));
+      return box;
+    }
+    function panelBody(a, tab) {
+      const parts = tab === 'hunt' ? [insights(a), benchmark(a), bestiary(a), kills(a, 8), drops(a)]
+        : tab === 'level' ? [levelPlan(a)] : tab === 'skills' ? [skillsBody(a)] : tab === 'gear' ? [gearBody(a)] : [missions(a)];
+      const shown = parts.filter(Boolean);
+      return shown.length ? el('div', null, shown) : el('div', { class: 'empty' }, 'Sem dados para esta conta agora.');
+    }
+    function renderPanel() {
+      const modal = $('panel-modal');
+      const a = openPanel && lastAccounts.find((x) => x.index === openPanel.index);
+      if (!a) { modal.classList.remove('open'); openPanel = null; return; }
+      const scroll = $('panel-body').scrollTop;
+      $('panel-title').textContent = a.label;
+      $('panel-tabs').replaceChildren(...TABS.map(([tab, title]) => {
+        const b = el('button', { type: 'button', 'aria-pressed': String(tab === openPanel.tab) }, title);
+        b.addEventListener('click', () => { openPanel.tab = tab; $('panel-body').scrollTop = 0; renderPanel(); });
+        return b;
+      }));
+      $('panel-body').replaceChildren(panelBody(a, openPanel.tab));
+      $('panel-body').scrollTop = scroll;
+      modal.classList.add('open');
+    }
+    function closePanel() { openPanel = null; renderPanel(); }
     function skillsBody(a) {
       const d = a.skills;
       const body = el('div');
@@ -499,17 +584,6 @@ public enum DashboardPage {
         `${d.coverage < 1 ? ` Resistências conhecidas para ${Math.round(num(d.coverage) * 100)}% dos kills.` : ''} É uma estimativa por modelo, não uma garantia.`));
       return body;
     }
-    function renderSkillsModal() {
-      const modal = $('skills-modal');
-      const a = openSkills === null ? null : lastAccounts.find((x) => x.index === openSkills);
-      if (!a) { modal.classList.remove('open'); openSkills = null; return; }
-      const scroll = $('skills-body').scrollTop;
-      $('skills-title').textContent = `Skills · ${a.label}`;
-      $('skills-body').replaceChildren(skillsBody(a));
-      $('skills-body').scrollTop = scroll;
-      modal.classList.add('open');
-    }
-    function closeSkills() { openSkills = null; renderSkillsModal(); }
 
     function missions(a) {
       const d = a.daily;
@@ -594,20 +668,13 @@ public enum DashboardPage {
         node.append(el('div', { class: 'hero' },
           el('div', null, el('small', null, 'XP/h'), el('b', null, fmt(an.xpPerHour))),
           el('div', null, el('small', null, 'Lucro/h'), el('b', { class: profit >= 0 ? 'pos' : 'neg' }, signed(perHour(profit, elapsed))))));
+        // The rest of the rates sit in the comparison table below the cards.
         node.append(el('div', { class: 'stats' },
-          stat('Tempo', duration(elapsed)), stat('XP', fmt(an.xp)), stat('Kills', fmt(an.killsTotal)),
-          stat('Loot', fmt(an.lootGold)), stat('Supplies', fmt(an.suppliesGold)), stat('Balance', signed(profit), profit >= 0 ? 'pos' : 'neg'),
-          stat('Dano/h', fmt(perHour(an.damageDealt, elapsed))), stat('Recebido/h', fmt(perHour(an.damageTaken, elapsed))),
-          stat('Cura/h', fmt(perHour(an.healingDone, elapsed))), stat('Lucro/kill', num(an.killsTotal) ? signed(profit / num(an.killsTotal)) : '—'),
-          stat('Kills/h', fmt(perHour(an.killsTotal, elapsed))),
-          stat('Supplies/kill', orDash(ratio(an.suppliesGold, an.killsTotal), fmt)),
-          stat('Recebido/kill', orDash(ratio(an.damageTaken, an.killsTotal), fmt)),
-          stat('Supplies/1k cura', orDash(perKXp(an.suppliesGold, an.healingDone), fmt)),
-          stat('Lucro/1k XP', orDash(perKXp(profit, an.xp), signed))));
-        const drops = topKills(an.drops, 12).filter(([n]) => n.toLowerCase() !== 'gold coin').slice(0, 5);
-        const kills = topKills(an.kills);
-        if (kills.length) node.append(el('div', { class: 'monsters' }, 'Mais abatidos: ' + kills.map(([m, n]) => `${m} ×${fmt(n)}`).join(' · ')));
-        if (drops.length) node.append(el('div', { class: 'monsters' }, 'Drops: ' + drops.map(([m, n]) => `${m} ×${fmt(n)}`).join(' · ')));
+          stat('Tempo', duration(elapsed)), stat('Kills/h', fmt(perHour(an.killsTotal, elapsed))), stat('Balance', signed(profit), profit >= 0 ? 'pos' : 'neg'),
+          stat('Supplies/h', fmt(perHour(an.suppliesGold, elapsed))), stat('Recebido/kill', orDash(ratio(an.damageTaken, an.killsTotal), fmt)),
+          stat('Lucro/kill', num(an.killsTotal) ? signed(profit / num(an.killsTotal)) : '—')));
+        const top = kills(a, 3);
+        if (top) node.append(top);
       } else if (a.lastSummary) {
         const s = a.lastSummary;
         node.append(el('div', { class: 'note' },
@@ -620,57 +687,33 @@ public enum DashboardPage {
         const when = inv.next.live ? 'em andamento' : `começa às ${time(inv.next.startAt)} (${until(inv.next.startAt)})`;
         node.append(el('div', { class: 'note' }, `${inv.name}${inv.boss ? ` · ${inv.boss}` : ''}: ${inv.joined ? 'inscrito' : 'não inscrito'} · ${when}`));
       }
-      const ins = insights(a);
-      if (ins) node.append(ins);
-      const lp = levelPlan(a);
-      if (lp) node.append(lp);
-      const bm = benchmark(a);
-      if (bm) node.append(bm);
-      const be = bestiary(a);
-      if (be) node.append(be);
-      const sk = skillsButton(a);
-      if (sk) node.append(sk);
+      const tl = tools(a);
+      if (tl) node.append(tl);
       if (a.supply) {
         for (const x of a.supply.alerts || []) node.append(el('div', { class: 'alert ' + x.level }, x.text));
-        const k = a.supply.keys;
-        if (k) node.append(el('div', { class: 'madvice' }, `Chaves: ${k.used}/${k.max}` + (k.nextKeyMs && k.used < k.max ? ` · próxima em ~${duration(k.nextKeyMs)}` : '')));
-        const c = a.supply.cap;
-        if (c) node.append(el('div', { class: 'madvice' }, `Mochila: ${fmt(c.used)}/${fmt(c.total)} (${Math.round(100 * c.used / c.total)}%)`));
+        const k = a.supply.keys, c = a.supply.cap, parts = [];
+        if (k) parts.push(`Chaves ${k.used}/${k.max}` + (k.nextKeyMs && k.used < k.max ? ` (próxima ~${duration(k.nextKeyMs)})` : ''));
+        if (c) parts.push(`Mochila ${Math.round(100 * c.used / c.total)}%`);
+        if (parts.length) node.append(el('div', { class: 'madvice', style: { marginTop: '8px' } }, parts.join(' · ')));
       }
-      const daily = missions(a);
-      if (daily) node.append(daily);
       const party = state.party || (a.status !== 'hunting' ? a.roster : null);
       if (party && party.length) {
         // Who spends the supplies: one member taking most of it points at that member's heal/potion setup.
         const sameName = party.length > 1 && party.every((m) => m.name === party[0].name);
         const spent = a.status === 'hunting' ? party.reduce((sum, m) => sum + num(m.suppliesGold), 0) : 0;
         if (spent > 0) node.append(el('div', { class: 'mhead', style: { marginTop: '12px' } }, 'Party · parte dos supplies na hunt'));
+        const hit = (m) => m.hpAverage != null && m.hpAverage < 0.8;
         node.append(el('div', { class: 'party' + (spent > 0 ? ' with-supplies' : '') }, party.map((m) => el('div', { class: 'member' },
-          el('span', { title: m.name || '' }, sameName ? `${vocation(m.vocation)} ${m.level || ''}` : `${m.name || ''} · ${vocation(m.vocation)} ${m.level || ''}`),
+          // Whoever takes the hits shows in the warning color; the averages are in the panel's Equipamento tab.
+          el('span', { class: hit(m) ? 'warn-text' : '', title: `${m.name || ''}${m.hpAverage != null ? ` · HP média na hunt ${Math.round(m.hpAverage * 100)}%` : ''}` },
+            sameName ? `${vocation(m.vocation)} ${m.level || ''}` : `${m.name || ''} · ${vocation(m.vocation)} ${m.level || ''}`),
           spent > 0 ? supplyShare(num(m.suppliesGold), spent, party.length) : null,
           m.maxHp ? el('div', { class: 'bars' },
             el('div', { class: 'bar', title: `HP ${m.hp}/${m.maxHp}` }, el('div', { style: { width: `${Math.max(0, Math.min(100, 100 * num(m.hp) / num(m.maxHp)))}%`, background: 'var(--good)' } })),
             num(m.maxMana) > 0 ? el('div', { class: 'bar', title: `Mana ${m.mana}/${m.maxMana}` }, el('div', { style: { width: `${Math.max(0, Math.min(100, 100 * num(m.mana) / num(m.maxMana)))}%`, background: 'var(--s0)' } })) : null)
             : el('span')))));
       }
-      const hp = (party || []).filter((m) => m.hpAverage != null);
-      if (hp.length) {
-        node.append(el('div', { class: 'madvice' }, 'HP média na hunt: ', hp.map((m, i) => el('span', { class: m.hpAverage < 0.8 ? 'warn-text' : '' },
-          `${i ? ' · ' : ''}${vocation(m.vocation)} ${Math.round(m.hpAverage * 100)}%${m.hpLowest < 0.6 ? ` (mín. ${Math.round(m.hpLowest * 100)}%)` : ''}`))));
-      }
-      const geared = (party || []).filter((m) => m.gear && Object.keys(m.gear).length);
-      if (geared.length) {
-        const key = `gear-${a.index}`;
-        const statText = (st) => Object.entries(st || {}).filter(([, v]) => typeof v === 'number' && v !== 0)
-          .map(([k, v]) => `${k.replace(/^attrs\./, '')} ${v}`).slice(0, 6).join(', ');
-        const details = el('details', openDetails.has(key) ? { open: '' } : null, el('summary', { class: 'madvice' }, 'Equipamento da party'),
-          geared.map((m) => el('div', { class: 'madvice' }, el('b', null, `${vocation(m.vocation)} ${m.level || ''}`),
-            el('ul', { style: { margin: '2px 0 4px', paddingLeft: '18px' } }, Object.entries(m.gear).map(([slot, item]) =>
-              el('li', null, `${slot}: ${item.name || '—'}`, statText(item.stats) ? el('span', { class: 'muted-text' }, ` · ${statText(item.stats)}`) : null))))));
-        details.addEventListener('toggle', () => { if (details.open) openDetails.add(key); else openDetails.delete(key); });
-        node.append(details);
-      }
-      if (a.offline && num(a.offline.elapsedMs) > 0) {
+      if (a.offline && num(a.offline.elapsedMs) >= 5 * 60000) {
         node.append(el('div', { class: 'note' },
           `Enquanto o app estava fechado (${duration(a.offline.elapsedMs)}): +${fmt(a.offline.xp)} XP · ${fmt(a.offline.killsTotal)} kills · ${fmt(a.offline.lootGold)} gold de loot`));
       }
@@ -838,8 +881,8 @@ public enum DashboardPage {
     $('presets-close').addEventListener('click', closePresets);
     $('presets-modal').addEventListener('click', (e) => { if (e.target === $('presets-modal')) closePresets(); });
 
-    $('skills-close').addEventListener('click', closeSkills);
-    $('skills-modal').addEventListener('click', (e) => { if (e.target === $('skills-modal')) closeSkills(); });
+    $('panel-close').addEventListener('click', closePanel);
+    $('panel-modal').addEventListener('click', (e) => { if (e.target === $('panel-modal')) closePanel(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSkills(); closePresets(); closeSetup(); } });
 
     async function refreshState() {
@@ -851,7 +894,7 @@ public enum DashboardPage {
         renderCompare(data.accounts);
         $('meta').textContent = `Atualizado às ${new Date(data.generatedAt).toLocaleTimeString('pt-BR')}`;
         renderLegend();
-        renderSkillsModal();
+        renderPanel();
       } catch (_) {
         $('meta').textContent = 'Sem conexão com o gerenciador — ele está aberto?';
       }
@@ -872,9 +915,18 @@ public enum DashboardPage {
         tile('Caçando', `${hunting.length}/${data.accounts.length}`), tile('Missões p/ resgatar', String(ready), ready ? 'pos' : ''),
         tile('Reset diário', reset ? `em ${until(reset)}` : '—'));
       const items = data.attention || [];
-      $('attention').replaceChildren(...(items.length ? items.map((i) => el('div', { class: 'item ' + i.level },
-        el('span', { class: 'swatch', style: { background: SERIES[i.account] } }), i.text))
-        : [el('div', { class: 'ok' }, '✓ Nada precisa de atenção agora.')]));
+      // One row per account, worst level first in its border, the account name said once.
+      const groups = new Map();
+      for (const i of items) groups.set(i.account, [...(groups.get(i.account) || []), i]);
+      const RANK = { info: 1, warn: 2, bad: 3 };
+      const rows = [...groups].map(([index, list]) => {
+        const label = (data.accounts.find((x) => x.index === index) || {}).label || '';
+        const strip = (t) => label && t.startsWith(label) ? t.slice(label.length).replace(/^\s*[:·]\s*/, '') : t;
+        const level = list.reduce((worst, i) => (RANK[i.level] || 0) > (RANK[worst] || 0) ? i.level : worst, list[0].level);
+        return el('div', { class: 'item ' + level }, el('span', { class: 'swatch', style: { background: SERIES[index] } }),
+          el('div', null, label ? el('b', null, label) : null, list.length === 1 ? ` ${strip(list[0].text)}` : el('ul', null, list.map((i) => el('li', null, strip(i.text))))));
+      });
+      $('attention').replaceChildren(...(rows.length ? rows : [el('div', { class: 'ok' }, '✓ Nada precisa de atenção agora.')]));
     }
 
     // ---- charts ----
