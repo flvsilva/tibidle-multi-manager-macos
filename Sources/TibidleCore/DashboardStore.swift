@@ -25,6 +25,8 @@ public final class DashboardStore {
     static let crowdSizes = [1, 2, 3, 4, 6, 8]
     /// Finished hunts, newest first, parsed once and dropped whenever a hunt is recorded.
     var runCache: [(account: Int, endedAt: Double, summary: [String: Any])]?
+    /// Average mana per party member during the current hunt (reset when a hunt starts or resumes).
+    private var mana: [Int: ManaTracker] = [:]
 
     public init(databaseURL: URL?, now: @escaping () -> Date = Date.init) {
         self.now = now
@@ -131,6 +133,7 @@ public final class DashboardStore {
             entry["offline"] = nil
             entry["huntStartedAt"] = date.timeIntervalSince1970 * 1000
             modeled[account] = ([:], 0, true, nil)
+            mana[account] = ManaTracker()
             entry["bestiarySnap"] = 0.0
         case "resume", "frame":
             if type == "resume", let battle = data["battleConfigs"] { entry["battle"] = battle }
@@ -139,7 +142,8 @@ public final class DashboardStore {
                 entry["huntBestiary"] = counters
                 entry["bestiarySnap"] = number((data["analyzer"] as? [String: Any])?["killsTotal"]) ?? 0
             }
-            if type == "resume" { modeled[account] = nil }
+            if type == "resume" { modeled[account] = nil; mana[account] = ManaTracker() }
+            if let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] { mana[account, default: ManaTracker()].add(party: party) }
             entry["status"] = "hunting"
             if let huntId = data["huntId"] { entry["huntId"] = huntId }
             if let state = data["state"] { entry["state"] = state }
@@ -268,7 +272,7 @@ public final class DashboardStore {
             }
             if entry["status"] as? String == "hunting", entry["training"] as? Bool != true,
                let skills = skillAnalysis(entry) {
-                out["skills"] = skills
+                out["skills"] = ManaBudget.apply(skills, averages: mana[index]?.averages() ?? [:])
             }
             out["battle"] = nil
             if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let bestiary = bestiaryProgress(entry) {

@@ -358,3 +358,55 @@ public enum SkillAdvisor {
         }.prefix(3).map { $0 }
     }
 }
+
+/// Average mana of each party member over the current hunt, from the live frames.
+public struct ManaTracker {
+    private var totals: [String: (sum: Double, count: Int)] = [:]
+    public static let minSamples = 20
+
+    public init() {}
+
+    static func key(name: String, vocation: String) -> String { "\(name)|\(SkillAdvisor.baseVocation(vocation))" }
+
+    public mutating func add(party: [[String: Any]]) {
+        for member in party {
+            guard let name = member["name"] as? String, let vocation = member["vocation"] as? String,
+                  let mana = (member["mana"] as? NSNumber)?.doubleValue, let maxMana = (member["maxMana"] as? NSNumber)?.doubleValue,
+                  maxMana > 0 else { continue }
+            let key = Self.key(name: name, vocation: vocation)
+            let total = totals[key] ?? (0, 0)
+            totals[key] = (total.sum + max(0, min(1, mana / maxMana)), total.count + 1)
+        }
+    }
+
+    /// Mean mana fraction (0...1) per member, once there are enough frames to mean something.
+    public func averages() -> [String: Double] {
+        totals.filter { $0.value.count >= Self.minSamples }.mapValues { $0.sum / Double($0.count) }
+    }
+}
+
+/// A suggestion that spends more mana is worth less when the member already runs dry: it means more potions
+/// (supplies) or the rotation stalling. This marks those, using the hunt's average mana.
+public enum ManaBudget {
+    public static let low = 0.25
+
+    public static func apply(_ analysis: [String: Any], averages: [String: Double]) -> [String: Any] {
+        guard !averages.isEmpty, let members = analysis["members"] as? [[String: Any]] else { return analysis }
+        var result = analysis
+        result["members"] = members.map { member -> [String: Any] in
+            guard let name = member["name"] as? String, let vocation = member["vocation"] as? String,
+                  let average = averages[ManaTracker.key(name: name, vocation: vocation)] else { return member }
+            var out = member
+            out["manaAverage"] = average
+            if average < low, let suggestions = member["suggestions"] as? [[String: Any]] {
+                out["suggestions"] = suggestions.map { suggestion -> [String: Any] in
+                    var item = suggestion
+                    if ((suggestion["manaPerMinuteDelta"] as? NSNumber)?.doubleValue ?? 0) > 0 { item["manaLimited"] = true }
+                    return item
+                }
+            }
+            return out
+        }
+        return result
+    }
+}

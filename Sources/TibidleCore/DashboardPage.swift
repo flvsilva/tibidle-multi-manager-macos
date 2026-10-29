@@ -149,6 +149,7 @@ public enum DashboardPage {
     .sk-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 8px; }
     .sk-top b { font-size: 15px; }
     .sk-top span { font-size: 12px; color: var(--ink-2); }
+    .sk-top span.warn-text { color: var(--warn-text); font-weight: 600; }
     .sk-row { display: grid; grid-template-columns: minmax(110px, 1.3fr) 60px 52px minmax(80px, 1.2fr); gap: 4px 10px; align-items: center; padding: 5px 0; font-size: 12px; border-top: 1px solid var(--border); }
     .sk-row.head { border-top: 0; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
     .sk-bar { display: flex; align-items: center; gap: 8px; }
@@ -396,8 +397,9 @@ public enum DashboardPage {
       if (!d || !d.members) return el('div', { class: 'empty' }, 'Sem dados de skills no momento (a conta precisa estar caçando).');
       for (const m of d.members) {
         const top = Math.max(1, ...(m.skills || []).map((s) => num(s.dps)));
-        const box = el('div', { class: 'sk-member' }, el('div', { class: 'sk-top' }, el('b', null, m.name),
-          el('span', null, `${fmt(m.dps)} dano/s`), el('span', null, `${fmt(m.manaPerMinute)} mana/min`)));
+        const box = el('div', { class: 'sk-member' }, el('div', { class: 'sk-top' }, el('b', null, `${m.name} · ${vocation(m.vocation)}`),
+          el('span', null, `${fmt(m.dps)} dano/s`), el('span', null, `${fmt(m.manaPerMinute)} mana/min`),
+          m.manaAverage != null ? el('span', { class: m.manaAverage < 0.25 ? 'warn-text' : '' }, `mana média na hunt ${Math.round(m.manaAverage * 100)}%`) : null));
         box.append(el('div', { class: 'sk-row head' }, el('span', null, 'Skill'), el('span', null, 'Elemento'), el('span', null, 'Alvos'), el('span', null, 'Contribuição')));
         for (const sk of m.skills || []) {
           const cls = num(sk.multiplier) < 0.5 ? 'warn' : num(sk.multiplier) >= 1.1 ? 'good' : '';
@@ -411,7 +413,10 @@ public enum DashboardPage {
         for (const sg of m.suggestions || []) {
           const what = sg.replace ? `Trocar ${sg.replace} por ${sg.add}` : `Adicionar ${sg.add}`;
           const mana = num(sg.manaPerMinuteDelta);
-          box.append(el('div', { class: 'sk-note good' }, `${what}: ${sg.fromZero ? 'hoje causa 0 de dano' : `+${Math.round(num(sg.gain) * 100)}% de dano estimado`}, ${mana >= 0 ? '+' : ''}${fmt(mana)} mana/min.`));
+          const text = `${what}: ${sg.fromZero ? 'hoje causa 0 de dano' : `+${Math.round(num(sg.gain) * 100)}% de dano estimado`}, ${mana >= 0 ? '+' : ''}${fmt(mana)} mana/min.`;
+          box.append(sg.manaLimited
+            ? el('div', { class: 'sk-note warn' }, `${text} Atenção: ${m.name} já passa a hunt com ~${Math.round(num(m.manaAverage) * 100)}% de mana em média; a mana extra deve vir de poção (mais supplies) ou a skill vai falhar por falta de mana.`)
+            : el('div', { class: 'sk-note good' }, text));
         }
         if (!(m.suggestions || []).length && !(m.skills || []).some((sk) => sk.warning)) box.append(el('div', { class: 'sk-note' }, 'Nenhuma troca com ganho relevante encontrada.'));
         body.append(box);

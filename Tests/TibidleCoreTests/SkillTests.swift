@@ -213,3 +213,30 @@ final class SkillTests: XCTestCase {
         XCTAssertEqual(kills(), 2454, "2400 read + (2430 - 2376) made since")
     }
 }
+
+final class ManaBudgetTests: XCTestCase {
+    func testFlagsManaHungrySuggestionsForMembersThatRunDry() {
+        var tracker = ManaTracker()
+        for _ in 0..<(ManaTracker.minSamples - 1) {
+            tracker.add(party: [["name": "Zolp", "vocation": "Elite Knight", "mana": 40, "maxMana": 400],
+                                ["name": "Zolp", "vocation": "DRUID", "mana": 1600, "maxMana": 2000]])
+        }
+        XCTAssertTrue(tracker.averages().isEmpty, "too few frames to judge")
+        tracker.add(party: [["name": "Zolp", "vocation": "Elite Knight", "mana": 40, "maxMana": 400],
+                            ["name": "Zolp", "vocation": "DRUID", "mana": 1600, "maxMana": 2000]])
+        let averages = tracker.averages()
+        XCTAssertEqual(averages["Zolp|knight"] ?? 0, 0.1, accuracy: 1e-9)
+
+        let suggestions: [[String: Any]] = [["add": "Groundshaker", "manaPerMinuteDelta": 1200], ["add": "Cheap", "manaPerMinuteDelta": -50]]
+        let analysis: [String: Any] = ["members": [
+            ["name": "Zolp", "vocation": "KNIGHT", "suggestions": suggestions],
+            ["name": "Zolp", "vocation": "DRUID", "suggestions": suggestions],
+        ]]
+        let members = ManaBudget.apply(analysis, averages: averages)["members"] as! [[String: Any]]
+        let knight = members[0]["suggestions"] as! [[String: Any]]
+        XCTAssertEqual(knight[0]["manaLimited"] as? Bool, true)
+        XCTAssertNil(knight[1]["manaLimited"], "a cheaper swap is fine")
+        XCTAssertEqual(members[1]["manaAverage"] as? Double ?? 0, 0.8, accuracy: 1e-9)
+        XCTAssertNil((members[1]["suggestions"] as! [[String: Any]])[0]["manaLimited"], "a member with mana to spare is not flagged")
+    }
+}
