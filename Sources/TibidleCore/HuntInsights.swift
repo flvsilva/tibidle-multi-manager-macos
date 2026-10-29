@@ -32,8 +32,10 @@ public enum HuntInsights {
         }.max { $0.profitPerHour < $1.profitPerHour }
     }
 
-    /// - Parameter setup: the current battle configuration per base vocation (KNIGHT, PALADIN…).
-    static func evaluate(reference: Run, analyzer: [String: Any]?, setup: [String: [String: Any]]) -> [String: Any] {
+    /// - Parameters:
+    ///   - setup: the current battle configuration per base vocation (KNIGHT, PALADIN…).
+    ///   - party: the party now, whose `suppliesGold` is what each member spent so far in this hunt.
+    static func evaluate(reference: Run, analyzer: [String: Any]?, setup: [String: [String: Any]], party: [[String: Any]] = []) -> [String: Any] {
         var out: [String: Any] = [:]
         let range = reference.summary["level"] as? [String: Any]
         let low = Int(number(range?["start"]) ?? 0), high = Int(number(range?["end"]) ?? 0)
@@ -49,8 +51,28 @@ public enum HuntInsights {
             let profit = ((number(analyzer["lootGold"]) ?? 0) - (number(analyzer["suppliesGold"]) ?? 0)) / (elapsed / 3_600_000)
             out["profitPerHour"] = Int(profit.rounded())
             if reference.profitPerHour > 0 { out["drop"] = (reference.profitPerHour - profit) / reference.profitPerHour }
+            out["members"] = members(party: party, hours: elapsed / 3_600_000, reference: reference, setup: setup)
         }
         return out
+    }
+
+    /// Supplies per hour of each member now and in the reference hunt, with the setup changes that touch the bill.
+    static func members(party: [[String: Any]], hours: Double, reference: Run, setup: [String: [String: Any]]) -> [[String: Any]] {
+        let before = (reference.summary["members"] as? [[String: Any]]) ?? []
+        return party.compactMap { member -> [String: Any]? in
+            guard let raw = member["vocation"] as? String else { return nil }
+            let vocation = SkillAdvisor.baseVocation(raw).uppercased()
+            var row: [String: Any] = ["vocation": vocation, "label": BattlePreset.vocationLabel(vocation),
+                                      "perHour": Int(((number(member["suppliesGold"]) ?? 0) / hours).rounded())]
+            if let then = before.first(where: { SkillAdvisor.baseVocation($0["vocation"] as? String ?? "").uppercased() == vocation }) {
+                row["before"] = Int(((number(then["suppliesGold"]) ?? 0) / reference.hours).rounded())
+            }
+            if let now = setup[vocation], let then = reference.setup?[vocation] {
+                let changes = BattlePreset(vocation: vocation, huntId: nil, huntTitle: "", config: now).costDifferences(from: then)
+                if !changes.isEmpty { row["changes"] = changes }
+            }
+            return row
+        }
     }
 
     static func number(_ value: Any?) -> Double? {

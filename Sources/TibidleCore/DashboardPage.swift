@@ -179,6 +179,7 @@ public enum DashboardPage {
     th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
     th { color: var(--muted); font-weight: 500; font-size: 12px; }
     td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+    .warn-text { color: var(--warn-text); }
     table.mini { margin-top: 4px; font-size: 12px; }
     table.mini th, table.mini td { padding: 3px 4px; }
     table.mini th { font-size: 11px; }
@@ -391,9 +392,27 @@ public enum DashboardPage {
         d.profitPerHour != null ? el('span', { class: drop ? 'warn-text' : '' },
           ` → agora ${signed(d.profitPerHour)}/h${d.drop != null ? ` (${d.drop > 0 ? '−' : '+'}${Math.round(Math.abs(d.drop) * 100)}%)` : ''}`) : null));
       const changes = d.changes || [];
+      const members = (d.members || []).filter((m) => m.before != null);
+      // A member now spending clearly more than then (30%+ and 2k+/h) is where the supplies went.
+      const worse = (m) => m.perHour > m.before * 1.3 && m.perHour - m.before >= 2000;
+      if (members.length) {
+        box.append(el('table', { class: 'mini', style: { marginTop: '6px' } },
+          el('thead', null, el('tr', null, el('th', null, 'Supplies/h'), el('th', { class: 'n' }, 'Agora'), el('th', { class: 'n' }, 'Naquela hunt'), el('th', { class: 'n' }, 'Diferença'))),
+          el('tbody', null, members.map((m) => el('tr', null, el('td', null, m.label),
+            el('td', { class: 'n' + (worse(m) ? ' warn-text' : '') }, fmt(m.perHour)), el('td', { class: 'n' }, fmt(m.before)),
+            el('td', { class: 'n' + (worse(m) ? ' warn-text' : '') }, signed(m.perHour - m.before)))))));
+        for (const m of members) if (worse(m) && m.changes && m.changes.length) {
+          box.append(el('div', { class: 'madvice warn-text' }, el('b', null, `${m.label} gasta ${signed(m.perHour - m.before)}/h a mais e mudou o que custa: `), m.changes.join(' · ')));
+        }
+      }
       if (!changes.length) box.append(el('div', { class: 'madvice' }, 'Mesmo setup de batalha daquela hunt.'));
-      for (const c of changes) {
-        box.append(el('div', { class: 'madvice' }, el('b', null, `${c.label} mudou: `), c.differences.join(' · ')));
+      else {
+        const key = `ins-${a.index}`;
+        const details = el('details', openDetails.has(key) ? { open: '' } : null,
+          el('summary', null, `O que mudou no setup desde aquela hunt (${changes.map((c) => c.label).join(', ')})`),
+          changes.map((c) => el('div', { class: 'madvice' }, el('b', null, c.label), el('ul', { style: { margin: '2px 0 4px', paddingLeft: '18px' } }, c.differences.map((x) => el('li', null, x))))));
+        details.addEventListener('toggle', () => { if (details.open) openDetails.add(key); else openDetails.delete(key); });
+        box.append(details);
       }
       if (drop && changes.length) box.append(el('div', { class: 'alert warn' }, 'O lucro caiu e o setup é outro: comece revertendo essas mudanças (Hunts recentes → Setup desta hunt mostra o setup completo daquela hunt).'));
       return box;

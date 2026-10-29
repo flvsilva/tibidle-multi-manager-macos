@@ -872,23 +872,25 @@ extension DashboardStore {
               let level = number((state?["character"] as? [String: Any])?["level"]) ?? number((entry["account"] as? [String: Any])?["level"])
         else { return nil }
         let setup = presetVocations(entry).reduce(into: [String: [String: Any]]()) { $0[$1.vocation] = BattlePreset.normalize($1.config) }
-        return insights(account: account, huntId: huntId, level: level, analyzer: entry["analyzer"] as? [String: Any], setup: setup)
+        return insights(account: account, huntId: huntId, level: level, analyzer: entry["analyzer"] as? [String: Any], setup: setup,
+                        party: state?["party"] as? [[String: Any]] ?? [])
     }
 
-    private func insights(account: Int, huntId: Int, level: Double, analyzer: [String: Any]?, setup: [String: [String: Any]]) -> [String: Any]? {
+    private func insights(account: Int, huntId: Int, level: Double, analyzer: [String: Any]?, setup: [String: [String: Any]],
+                          party: [[String: Any]]) -> [String: Any]? {
         let runs = allRuns().filter { $0.account == account }.map { HuntInsights.Run(id: $0.id, summary: $0.summary) }
         guard let reference = HuntInsights.reference(runs: runs, huntId: huntId, level: level, now: now().timeIntervalSince1970 * 1000)
         else { return nil }
-        return HuntInsights.evaluate(reference: reference, analyzer: analyzer, setup: setup)
+        return HuntInsights.evaluate(reference: reference, analyzer: analyzer, setup: setup, party: party)
     }
 
     /// For the development server, which sees the app's state without the battle configuration:
     /// it stands in with the setup of the account's latest recorded hunt.
-    public func insights(account: Int, huntId: Int, level: Double, analyzer: [String: Any]?) -> [String: Any]? {
+    public func insights(account: Int, huntId: Int, level: Double, analyzer: [String: Any]?, party: [[String: Any]]) -> [String: Any]? {
         queue.sync {
             let setup = allRuns().first { $0.account == account && $0.summary["setup"] != nil }
                 .flatMap { ($0.summary["setup"] as? [String: Any])?.compactMapValues { $0 as? [String: Any] } } ?? [:]
-            return insights(account: account, huntId: huntId, level: level, analyzer: analyzer, setup: setup)
+            return insights(account: account, huntId: huntId, level: level, analyzer: analyzer, setup: setup, party: party)
         }
     }
 }

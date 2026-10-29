@@ -175,12 +175,21 @@ public struct BattlePreset: Equatable {
         for name in common where ((a[name] as? Int) ?? 1) != ((b[name] as? Int) ?? 1) {
             out.append("\(name): mínimo de criaturas de \((b[name] as? Int) ?? 1) para \((a[name] as? Int) ?? 1)")
         }
-        out += Self.healDifferences(from: Self.heals(other), to: Self.heals(config))
-        let potion = Self.potion(config), previous = Self.potion(other)
-        if potion != previous { out.append("Poção de mana: de \(previous ?? "nenhuma") para \(potion ?? "nenhuma")") }
+        out += costDifferences(from: other)
         let supports = (config["supports"] as? [Any] ?? []).compactMap { $0 as? String }
         let before = (other["supports"] as? [Any] ?? []).compactMap { $0 as? String }
         if supports != before { out.append("Suportes: de \(Self.list(before)) para \(Self.list(supports))") }
+        return out
+    }
+
+    /// The changes that move the supplies bill: heals, mana potion and ammunition.
+    public func costDifferences(from current: [String: Any]) -> [String] {
+        let other = BattlePreset.normalize(current)
+        var out = Self.healDifferences(from: Self.heals(other), to: Self.heals(config))
+        let potion = Self.potion(config), previous = Self.potion(other)
+        if potion != previous { out.append("Poção de mana: de \(previous ?? "nenhuma") para \(potion ?? "nenhuma")") }
+        let ammo = config["ammo"] as? String, before = other["ammo"] as? String
+        if ammo != before { out.append("Munição: de \(before ?? "nenhuma") para \(ammo ?? "nenhuma")") }
         return out
     }
 

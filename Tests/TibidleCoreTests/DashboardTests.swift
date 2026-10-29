@@ -238,6 +238,19 @@ final class DashboardStoreTests: XCTestCase {
         XCTAssertFalse((early["attention"] as! [[String: Any]]).contains { $0["kind"] as? String == "setup" })
     }
 
+    func testInsightsShowSuppliesPerMemberAndWhatChangedInTheirCost() {
+        let reference = HuntInsights.Run(id: 1, summary: [
+            "elapsedSec": 7200, "members": [["vocation": "PALADIN", "suppliesGold": 10_000], ["vocation": "KNIGHT", "suppliesGold": 2000]],
+            "setup": ["PALADIN": ["skills": ["Divine Caldera"], "ammo": "burst arrow"], "KNIGHT": ["skills": ["Berserk"]]]])
+        let setup: [String: [String: Any]] = ["PALADIN": ["skills": ["Divine Caldera"], "ammo": "onyx arrow"], "KNIGHT": ["skills": ["Berserk"]]]
+        let party: [[String: Any]] = [["vocation": "Royal Paladin", "suppliesGold": 18_000], ["vocation": "KNIGHT", "suppliesGold": 1000], ["vocation": "DRUID", "suppliesGold": 50]]
+        let rows = HuntInsights.members(party: party, hours: 2, reference: reference, setup: setup)
+        XCTAssertEqual(rows.map { $0["perHour"] as? Int }, [9000, 500, 25])
+        XCTAssertEqual(rows.map { $0["before"] as? Int }, [5000, 1000, nil])
+        XCTAssertEqual(rows[0]["changes"] as? [String], ["Munição: de burst arrow para onyx arrow"])
+        XCTAssertNil(rows[1]["changes"], "skills alone do not change what the knight spends")
+    }
+
     func testRejectsInvalidInput() {
         let store = makeStore()
         store.ingest(account: 7, json: #"{"type":"welcome","data":{}}"#)
