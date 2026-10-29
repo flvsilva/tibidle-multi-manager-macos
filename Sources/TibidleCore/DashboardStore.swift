@@ -293,6 +293,7 @@ public final class DashboardStore {
             if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let insights = insights(account: index, entry) {
                 out["insights"] = insights
             }
+            if entry["status"] as? String == "hunting", let plan = levelPlan(account: index, entry) { out["levelPlan"] = plan }
             return out
         }
     }
@@ -899,6 +900,24 @@ extension DashboardStore {
         guard let reference = HuntInsights.reference(runs: runs, huntId: huntId, level: level, now: now().timeIntervalSince1970 * 1000)
         else { return nil }
         return HuntInsights.evaluate(reference: reference, analyzer: analyzer, setup: setup, party: party)
+    }
+
+    func levelPlan(account: Int, _ entry: [String: Any]) -> [String: Any]? {
+        let character = (entry["state"] as? [String: Any])?["character"] as? [String: Any]
+        guard let level = number(character?["level"]), let xp = number(character?["xp"]) else { return nil }
+        return plan(account: account, level: Int(level), xp: xp,
+                    xpPerHour: number((entry["analyzer"] as? [String: Any])?["xpPerHour"]) ?? 0, huntId: number(entry["huntId"]).map { Int($0) })
+    }
+
+    private func plan(account: Int, level: Int, xp: Double, xpPerHour: Double, huntId: Int?) -> [String: Any]? {
+        let runs = allRuns().filter { $0.account == account }.map { HuntInsights.Run(id: $0.id, summary: $0.summary) }
+        return HuntInsights.levelPlan(level: level, xp: xp, xpPerHour: xpPerHour, huntId: huntId, runs: runs,
+                                      now: now().timeIntervalSince1970 * 1000) { [catalog] id in catalog.hunt(id: id)?.title ?? "Hunt #\(id)" }
+    }
+
+    /// Also used by the development server, on top of the app's live state.
+    public func levelPlan(account: Int, level: Int, xp: Double, xpPerHour: Double, huntId: Int?) -> [String: Any]? {
+        queue.sync { plan(account: account, level: level, xp: xp, xpPerHour: xpPerHour, huntId: huntId) }
     }
 
     /// For the development server, which sees the app's state without the battle configuration:

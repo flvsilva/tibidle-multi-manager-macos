@@ -75,6 +75,43 @@ public enum HuntInsights {
         }
     }
 
+    /// Total experience at the start of a level (the game uses Tibia's table).
+    static func experience(level: Int) -> Double {
+        let l = Double(level - 1)
+        return (50 * l * l * l - 150 * l * l + 400 * l) / 3
+    }
+
+    /// Time to the next level on this hunt, and on the other maps this account hunted near this level,
+    /// with the gold made (or spent) on the way: how much leveling faster costs.
+    static func levelPlan(level: Int, xp: Double, xpPerHour: Double, huntId: Int?, runs: [Run], now: Double,
+                          title: (Int) -> String) -> [String: Any]? {
+        let needed = experience(level: level + 1) - xp
+        guard needed > 0 else { return nil }
+        var out: [String: Any] = ["next": level + 1, "needed": Int(needed.rounded())]
+        if xpPerHour > 0 { out["etaMs"] = needed / xpPerHour * 3_600_000 }
+        struct Total { var seconds = 0.0, xp = 0.0, balance = 0.0, limited = false }
+        var totals: [Int: Total] = [:]
+        for run in runs where run.hours * 3600 >= minSeconds && now - run.endedAt <= window
+            && run.levelMid.map({ abs($0 - Double(level)) <= levelRange }) == true {
+            guard let id = number(run.summary["huntId"]).map({ Int($0) }) else { continue }
+            var total = totals[id] ?? Total()
+            total.seconds += run.hours * 3600
+            total.xp += number(run.summary["xp"]) ?? 0
+            total.balance += number(run.summary["balance"]) ?? 0
+            total.limited = total.limited || run.summary["reason"] as? String == "access_over"
+            totals[id] = total
+        }
+        let maps = totals.filter { $0.value.xp > 0 }.map { id, total -> [String: Any] in
+            let hours = total.seconds / 3600, perHour = total.xp / hours, profit = total.balance / hours
+            let eta = needed / perHour
+            return ["huntId": id, "title": title(id), "current": id == huntId, "hours": (hours * 10).rounded() / 10,
+                    "xpPerHour": Int(perHour.rounded()), "profitPerHour": Int(profit.rounded()),
+                    "etaMs": eta * 3_600_000, "goldToLevel": Int((profit * eta).rounded()), "limited": total.limited]
+        }.sorted { ($0["xpPerHour"] as? Int ?? 0) > ($1["xpPerHour"] as? Int ?? 0) }
+        if !maps.isEmpty { out["maps"] = Array(maps.prefix(4)) }
+        return out
+    }
+
     static func number(_ value: Any?) -> Double? {
         switch value {
         case let n as NSNumber: return n.doubleValue

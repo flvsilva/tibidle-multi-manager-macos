@@ -251,6 +251,28 @@ final class DashboardStoreTests: XCTestCase {
         XCTAssertNil(rows[1]["changes"], "skills alone do not change what the knight spends")
     }
 
+    func testLevelPlanUsesTheTibiaTableAndComparesMaps() {
+        XCTAssertEqual(HuntInsights.experience(level: 164), 70_872_400)   // showshow: 71,487,341 XP at level 164
+        XCTAssertEqual(HuntInsights.experience(level: 165), 72_192_800)
+        let now = 1_800_000_000_000.0
+        func run(_ map: Int, hours: Double, xp: Double, balance: Double, reason: String = "stop", level: Int = 105) -> HuntInsights.Run {
+            HuntInsights.Run(id: map, summary: ["huntId": map, "elapsedSec": hours * 3600, "xp": "\(Int(xp))", "balance": balance, "reason": reason,
+                                                "endedAt": now - 3_600_000, "level": ["start": level, "end": level]])
+        }
+        let needed = HuntInsights.experience(level: 106) - 18_363_840
+        let plan = HuntInsights.levelPlan(level: 105, xp: 18_363_840, xpPerHour: 60_000, huntId: 151, runs: [
+            run(151, hours: 4, xp: 240_000, balance: 280_000), run(262, hours: 3, xp: 480_000, balance: -60_000, reason: "access_over"),
+            run(7, hours: 3, xp: 999_999_999, balance: 0, level: 140),   // another level range
+        ], now: now) { "Hunt \($0)" }!
+        XCTAssertEqual(plan["next"] as? Int, 106)
+        XCTAssertEqual(plan["needed"] as? Int, Int(needed.rounded()))
+        let maps = plan["maps"] as! [[String: Any]]
+        XCTAssertEqual(maps.map { $0["huntId"] as? Int }, [262, 151], "fastest first")
+        XCTAssertEqual(maps[0]["limited"] as? Bool, true)
+        XCTAssertEqual(maps[0]["goldToLevel"] as? Int, Int((-20_000 * needed / 160_000).rounded()))
+        XCTAssertEqual(maps[1]["current"] as? Bool, true)
+    }
+
     func testRejectsInvalidInput() {
         let store = makeStore()
         store.ingest(account: 7, json: #"{"type":"welcome","data":{}}"#)

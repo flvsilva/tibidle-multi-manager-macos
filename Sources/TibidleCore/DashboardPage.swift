@@ -179,7 +179,7 @@ public enum DashboardPage {
     th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
     th { color: var(--muted); font-weight: 500; font-size: 12px; }
     td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
-    .warn-text { color: var(--warn-text); }
+    .warn-text { color: var(--warn-text); } .muted-text { color: var(--muted); }
     table.mini { margin-top: 4px; font-size: 12px; }
     table.mini th, table.mini td { padding: 3px 4px; }
     table.mini th { font-size: 11px; }
@@ -325,6 +325,10 @@ public enum DashboardPage {
     const short = new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 });
     const fmt = (v) => Math.abs(num(v)) >= 100000 ? short.format(num(v)) : full.format(Math.round(num(v)));
     const signed = (v) => (num(v) > 0 ? '+' : '') + fmt(v);
+    // Narrow tables: 166k, 1,2kk, 5h47.
+    const kk = (v) => { const n = num(v), a = Math.abs(n); return a >= 1e6 ? `${(n / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}kk` : a >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n)); };
+    const kkSigned = (v) => (num(v) > 0 ? '+' : '') + kk(v);
+    const hm = (ms) => { const m = Math.max(0, Math.round(num(ms) / 60000)); return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`; };
     const duration = (ms) => {
       const m = Math.max(0, Math.floor(num(ms) / 60000)), h = Math.floor(m / 60);
       return h ? `${h}h ${String(m % 60).padStart(2, '0')}min` : `${m}min`;
@@ -422,6 +426,25 @@ public enum DashboardPage {
         if (h) openSetup(h);
       });
       box.append(view);
+      return box;
+    }
+
+    // Next level: when on this hunt, and on the other maps this account hunted near this level (and the gold on the way).
+    function levelPlan(a) {
+      const p = a.levelPlan;
+      if (!p) return null;
+      const box = el('div', { class: 'bestiary level-plan' }, el('div', { class: 'mhead' }, `Próximo nível (${p.next})`),
+        el('div', { class: 'madvice' }, `Faltam ${fmt(p.needed)} XP${p.etaMs ? ` · ~${duration(p.etaMs)} no ritmo atual` : ''}`));
+      const maps = p.maps || [];
+      if (maps.length > 1 || (maps.length === 1 && !maps[0].current)) {
+        box.append(el('div', { class: 'table-wrap' }, el('table', { class: 'mini' },
+          el('thead', null, el('tr', null, el('th', null, 'Hunt'), ['XP/h', 'Lucro/h', 'Tempo', 'Gold'].map((h) => el('th', { class: 'n' }, h)))),
+          el('tbody', null, maps.map((m) => el('tr', { title: `${m.hours.toLocaleString('pt-BR')}h de histórico perto deste nível` },
+            el('td', { style: { whiteSpace: 'normal' } }, m.title, m.current ? ' (atual)' : '', m.limited ? el('div', { class: 'muted-text', style: { fontSize: '11px' } }, 'acesso limitado') : null),
+            el('td', { class: 'n' }, kk(m.xpPerHour)), el('td', { class: 'n ' + (m.profitPerHour >= 0 ? 'pos' : 'neg') }, kkSigned(m.profitPerHour)),
+            el('td', { class: 'n' }, hm(m.etaMs)), el('td', { class: 'n ' + (m.goldToLevel >= 0 ? 'pos' : 'neg') }, kkSigned(m.goldToLevel))))))));
+        box.append(el('div', { class: 'sk-foot', style: { marginTop: '4px' } }, 'Do seu histórico nas últimas 2 semanas, perto deste nível. Tempo e gold: até subir de nível naquela hunt (gold negativo é o custo de subir mais rápido).'));
+      }
       return box;
     }
 
@@ -592,6 +615,8 @@ public enum DashboardPage {
       }
       const ins = insights(a);
       if (ins) node.append(ins);
+      const lp = levelPlan(a);
+      if (lp) node.append(lp);
       const bm = benchmark(a);
       if (bm) node.append(bm);
       const be = bestiary(a);
