@@ -25,8 +25,8 @@ public final class DashboardStore {
     static let crowdSizes = [1, 2, 3, 4, 6, 8]
     /// Finished hunts, newest first, parsed once and dropped whenever a hunt is recorded.
     var runCache: [(account: Int, endedAt: Double, summary: [String: Any], id: Int)]?
-    /// Average mana per party member during the current hunt (reset when a hunt starts or resumes).
-    private var mana: [Int: ManaTracker] = [:]
+    /// Average mana and health per party member during the current hunt (reset when a hunt starts or resumes).
+    private var vitals: [Int: VitalsTracker] = [:]
 
     public init(databaseURL: URL?, now: @escaping () -> Date = Date.init) {
         self.now = now
@@ -133,7 +133,7 @@ public final class DashboardStore {
             entry["offline"] = nil
             entry["huntStartedAt"] = date.timeIntervalSince1970 * 1000
             modeled[account] = ([:], 0, true, nil)
-            mana[account] = ManaTracker()
+            vitals[account] = VitalsTracker()
             entry["bestiarySnap"] = 0.0
         case "resume", "frame":
             if type == "resume", let battle = data["battleConfigs"] { entry["battle"] = battle }
@@ -142,8 +142,8 @@ public final class DashboardStore {
                 entry["huntBestiary"] = counters
                 entry["bestiarySnap"] = number((data["analyzer"] as? [String: Any])?["killsTotal"]) ?? 0
             }
-            if type == "resume" { modeled[account] = nil; mana[account] = ManaTracker() }
-            if let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] { mana[account, default: ManaTracker()].add(party: party) }
+            if type == "resume" { modeled[account] = nil; vitals[account] = VitalsTracker() }
+            if let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] { vitals[account, default: VitalsTracker()].add(party: party) }
             entry["status"] = "hunting"
             if let huntId = data["huntId"] { entry["huntId"] = huntId }
             if let state = data["state"] { entry["state"] = state }
@@ -173,10 +173,15 @@ public final class DashboardStore {
             summary["endedAt"] = date.timeIntervalSince1970 * 1000
             summary["characters"] = characterNames(entry)
             if let party = (entry["state"] as? [String: Any])?["party"] as? [[String: Any]], !party.isEmpty {
-                // Who spent the supplies (the last frame before the end holds the hunt's totals per member).
+                // Who spent the supplies (the last frame before the end holds the hunt's totals per member),
+                // and who took the hits.
+                let health = vitals[account]?.health() ?? [:]
                 summary["members"] = party.map { member -> [String: Any] in
-                    ["name": member["name"] as? String ?? "", "vocation": member["vocation"] as? String ?? "",
-                     "level": number(member["level"]) ?? 0, "suppliesGold": number(member["suppliesGold"]) ?? 0]
+                    let name = member["name"] as? String ?? "", vocation = member["vocation"] as? String ?? ""
+                    var out: [String: Any] = ["name": name, "vocation": vocation,
+                                              "level": number(member["level"]) ?? 0, "suppliesGold": number(member["suppliesGold"]) ?? 0]
+                    if let h = health[VitalsTracker.key(name: name, vocation: vocation)] { out["hpAverage"] = h.average; out["hpLowest"] = h.lowest }
+                    return out
                 }
             }
             // The battle setup this hunt ran with, so two hunts can later be compared ("what changed?").
@@ -272,7 +277,12 @@ public final class DashboardStore {
             }
             if entry["status"] as? String == "hunting", entry["training"] as? Bool != true,
                let skills = skillAnalysis(entry) {
-                out["skills"] = ManaBudget.apply(skills, averages: mana[index]?.averages() ?? [:])
+                out["skills"] = ManaBudget.apply(skills, averages: vitals[index]?.averages() ?? [:])
+            }
+            if entry["status"] as? String == "hunting", let tracker = vitals[index], var state = entry["state"] as? [String: Any],
+               let party = state["party"] as? [[String: Any]] {
+                state["party"] = tracker.annotate(party: party)
+                out["state"] = state
             }
             out["battle"] = nil
             if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let bestiary = bestiaryProgress(entry) {

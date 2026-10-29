@@ -364,9 +364,11 @@ public enum SkillAdvisor {
     }
 }
 
-/// Average mana of each party member over the current hunt, from the live frames.
-public struct ManaTracker {
-    private var totals: [String: (sum: Double, count: Int)] = [:]
+/// Average mana and health of each party member over the current hunt, from the live frames
+/// (who runs dry, who takes the hits).
+public struct VitalsTracker {
+    private var mana: [String: (sum: Double, count: Int)] = [:]
+    private var hp: [String: (sum: Double, count: Int, lowest: Double)] = [:]
     public static let minSamples = 20
 
     public init() {}
@@ -374,19 +376,46 @@ public struct ManaTracker {
     static func key(name: String, vocation: String) -> String { "\(name)|\(SkillAdvisor.baseVocation(vocation))" }
 
     public mutating func add(party: [[String: Any]]) {
+        func fraction(_ member: [String: Any], _ value: String, _ limit: String) -> Double? {
+            guard let v = (member[value] as? NSNumber)?.doubleValue, let m = (member[limit] as? NSNumber)?.doubleValue, m > 0 else { return nil }
+            return max(0, min(1, v / m))
+        }
         for member in party {
-            guard let name = member["name"] as? String, let vocation = member["vocation"] as? String,
-                  let mana = (member["mana"] as? NSNumber)?.doubleValue, let maxMana = (member["maxMana"] as? NSNumber)?.doubleValue,
-                  maxMana > 0 else { continue }
+            guard let name = member["name"] as? String, let vocation = member["vocation"] as? String else { continue }
             let key = Self.key(name: name, vocation: vocation)
-            let total = totals[key] ?? (0, 0)
-            totals[key] = (total.sum + max(0, min(1, mana / maxMana)), total.count + 1)
+            if let m = fraction(member, "mana", "maxMana") {
+                let total = mana[key] ?? (0, 0)
+                mana[key] = (total.sum + m, total.count + 1)
+            }
+            if let h = fraction(member, "hp", "maxHp") {
+                let total = hp[key] ?? (0, 0, 1)
+                hp[key] = (total.sum + h, total.count + 1, min(total.lowest, h))
+            }
         }
     }
 
     /// Mean mana fraction (0...1) per member, once there are enough frames to mean something.
     public func averages() -> [String: Double] {
-        totals.filter { $0.value.count >= Self.minSamples }.mapValues { $0.sum / Double($0.count) }
+        mana.filter { $0.value.count >= Self.minSamples }.mapValues { $0.sum / Double($0.count) }
+    }
+
+    /// Mean and lowest health fraction per member.
+    public func health() -> [String: (average: Double, lowest: Double)] {
+        hp.filter { $0.value.count >= Self.minSamples }.mapValues { ($0.sum / Double($0.count), $0.lowest) }
+    }
+
+    /// The party with `hpAverage`/`hpLowest` on each member the tracker has enough frames for.
+    public func annotate(party: [[String: Any]]) -> [[String: Any]] {
+        let health = health()
+        guard !health.isEmpty else { return party }
+        return party.map { member in
+            guard let name = member["name"] as? String, let vocation = member["vocation"] as? String,
+                  let h = health[Self.key(name: name, vocation: vocation)] else { return member }
+            var out = member
+            out["hpAverage"] = h.average
+            out["hpLowest"] = h.lowest
+            return out
+        }
     }
 }
 
@@ -400,7 +429,7 @@ public enum ManaBudget {
         var result = analysis
         result["members"] = members.map { member -> [String: Any] in
             guard let name = member["name"] as? String, let vocation = member["vocation"] as? String,
-                  let average = averages[ManaTracker.key(name: name, vocation: vocation)] else { return member }
+                  let average = averages[VitalsTracker.key(name: name, vocation: vocation)] else { return member }
             var out = member
             out["manaAverage"] = average
             if average < low, let suggestions = member["suggestions"] as? [[String: Any]] {

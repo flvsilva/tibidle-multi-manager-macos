@@ -228,6 +228,7 @@ final class DashboardStoreTests: XCTestCase {
         XCTAssertEqual(insights["drop"] as? Double, 0.5)
         let changes = insights["changes"] as! [[String: Any]]
         XCTAssertEqual(changes.first?["differences"] as? [String], ["Energy Wave: mínimo de criaturas de 2 para 5"])
+        XCTAssertNil(insights["takenPerKill"], "too few kills to divide by")
         let attention = state["attention"] as! [[String: Any]]
         XCTAssertTrue(attention.contains { ($0["text"] as? String)?.contains("50% abaixo da sua melhor hunt recente aqui (80k/h") == true })
 
@@ -249,6 +250,22 @@ final class DashboardStoreTests: XCTestCase {
         XCTAssertEqual(rows.map { $0["before"] as? Int }, [5000, 1000, nil])
         XCTAssertEqual(rows[0]["changes"] as? [String], ["Munição: de burst arrow para onyx arrow"])
         XCTAssertNil(rows[1]["changes"], "skills alone do not change what the knight spends")
+    }
+
+    func testHuntSummaryKeepsEachMembersHealth() {
+        let store = makeStore()
+        store.ingest(account: 0, json: #"{"type":"hunt_started","data":{"huntId":151}}"#)
+        for hp in [100, 40] {
+            for _ in 0..<10 {
+                store.ingest(account: 0, json: #"{"type":"frame","data":{"state":{"party":[{"name":"Zolp","vocation":"KNIGHT","hp":\#(hp),"maxHp":100,"suppliesGold":5}]}}}"#)
+            }
+        }
+        let live = ((object(store.stateJSON())["accounts"] as! [[String: Any]])[0]["state"] as! [String: Any])["party"] as! [[String: Any]]
+        XCTAssertEqual(live[0]["hpAverage"] as? Double ?? 0, 0.7, accuracy: 1e-9)
+        store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":151,"elapsedSec":60,"killsTotal":100,"damageTaken":25000}}}"#)
+        let member = ((object(store.huntsJSON(limit: 1))["hunts"] as! [[String: Any]])[0]["members"] as! [[String: Any]])[0]
+        XCTAssertEqual(member["hpLowest"] as? Double, 0.4)
+        XCTAssertEqual(HuntInsights.takenPerKill(["killsTotal": 100, "damageTaken": 25000]), 250)
     }
 
     func testLevelPlanUsesTheTibiaTableAndComparesMaps() {

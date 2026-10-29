@@ -216,8 +216,8 @@ final class SkillTests: XCTestCase {
 
 final class ManaBudgetTests: XCTestCase {
     func testFlagsManaHungrySuggestionsForMembersThatRunDry() {
-        var tracker = ManaTracker()
-        for _ in 0..<(ManaTracker.minSamples - 1) {
+        var tracker = VitalsTracker()
+        for _ in 0..<(VitalsTracker.minSamples - 1) {
             tracker.add(party: [["name": "Zolp", "vocation": "Elite Knight", "mana": 40, "maxMana": 400],
                                 ["name": "Zolp", "vocation": "DRUID", "mana": 1600, "maxMana": 2000]])
         }
@@ -238,6 +238,22 @@ final class ManaBudgetTests: XCTestCase {
         XCTAssertNil(knight[1]["manaLimited"], "a cheaper swap is fine")
         XCTAssertEqual(members[1]["manaAverage"] as? Double ?? 0, 0.8, accuracy: 1e-9)
         XCTAssertNil((members[1]["suggestions"] as! [[String: Any]])[0]["manaLimited"], "a member with mana to spare is not flagged")
+    }
+}
+
+final class VitalsTests: XCTestCase {
+    func testTracksAverageAndLowestHealthPerMember() {
+        var tracker = VitalsTracker()
+        for hp in [100, 50, 90, 80] {
+            for _ in 0..<5 {
+                tracker.add(party: [["name": "Zolp", "vocation": "KNIGHT", "hp": hp, "maxHp": 100], ["name": "Zolp", "vocation": "DRUID", "hp": 60, "maxHp": 60]])
+            }
+        }
+        let party = tracker.annotate(party: [["name": "Zolp", "vocation": "Elite Knight"], ["name": "Zolp", "vocation": "DRUID"], ["name": "Novo", "vocation": "DRUID"]])
+        XCTAssertEqual(party[0]["hpAverage"] as? Double ?? 0, 0.8, accuracy: 1e-9)
+        XCTAssertEqual(party[0]["hpLowest"] as? Double, 0.5)
+        XCTAssertEqual(party[1]["hpAverage"] as? Double, 1)
+        XCTAssertNil(party[2]["hpAverage"], "a member with no frames stays as it was")
     }
 }
 

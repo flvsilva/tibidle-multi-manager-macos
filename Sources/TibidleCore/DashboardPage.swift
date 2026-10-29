@@ -395,6 +395,11 @@ public enum DashboardPage {
       box.append(el('div', { class: 'madvice' }, `${dateTime(r.endedAt)} · nível ${r.levels} · ${r.hours.toLocaleString('pt-BR')}h · ${signed(r.profitPerHour)}/h`,
         d.profitPerHour != null ? el('span', { class: drop ? 'warn-text' : '' },
           ` → agora ${signed(d.profitPerHour)}/h${d.drop != null ? ` (${d.drop > 0 ? '−' : '+'}${Math.round(Math.abs(d.drop) * 100)}%)` : ''}`) : null));
+      if (r.takenPerKill != null && d.takenPerKill != null) {
+        const worse = d.takenPerKill > r.takenPerKill * 1.15;
+        box.append(el('div', { class: 'madvice' + (worse ? ' warn-text' : '') },
+          `Dano recebido por kill: ${fmt(r.takenPerKill)} naquela hunt → ${fmt(d.takenPerKill)} agora${worse ? ' (a party está apanhando mais por monstro)' : ''}`));
+      }
       const changes = d.changes || [];
       const members = (d.members || []).filter((m) => m.before != null);
       // A member now spending clearly more than then (30%+ and 2k+/h) is where the supplies went.
@@ -596,6 +601,8 @@ public enum DashboardPage {
           stat('Cura/h', fmt(perHour(an.healingDone, elapsed))), stat('Lucro/kill', num(an.killsTotal) ? signed(profit / num(an.killsTotal)) : '—'),
           stat('Kills/h', fmt(perHour(an.killsTotal, elapsed))),
           stat('Supplies/kill', orDash(ratio(an.suppliesGold, an.killsTotal), fmt)),
+          stat('Recebido/kill', orDash(ratio(an.damageTaken, an.killsTotal), fmt)),
+          stat('Supplies/1k cura', orDash(perKXp(an.suppliesGold, an.healingDone), fmt)),
           stat('Lucro/1k XP', orDash(perKXp(profit, an.xp), signed))));
         const drops = topKills(an.drops, 12).filter(([n]) => n.toLowerCase() !== 'gold coin').slice(0, 5);
         const kills = topKills(an.kills);
@@ -646,6 +653,11 @@ public enum DashboardPage {
             num(m.maxMana) > 0 ? el('div', { class: 'bar', title: `Mana ${m.mana}/${m.maxMana}` }, el('div', { style: { width: `${Math.max(0, Math.min(100, 100 * num(m.mana) / num(m.maxMana)))}%`, background: 'var(--s0)' } })) : null)
             : el('span')))));
       }
+      const hp = (party || []).filter((m) => m.hpAverage != null);
+      if (hp.length) {
+        node.append(el('div', { class: 'madvice' }, 'HP média na hunt: ', hp.map((m, i) => el('span', { class: m.hpAverage < 0.8 ? 'warn-text' : '' },
+          `${i ? ' · ' : ''}${vocation(m.vocation)} ${Math.round(m.hpAverage * 100)}%${m.hpLowest < 0.6 ? ` (mín. ${Math.round(m.hpLowest * 100)}%)` : ''}`))));
+      }
       if (a.offline && num(a.offline.elapsedMs) > 0) {
         node.append(el('div', { class: 'note' },
           `Enquanto o app estava fechado (${duration(a.offline.elapsedMs)}): +${fmt(a.offline.xp)} XP · ${fmt(a.offline.killsTotal)} kills · ${fmt(a.offline.lootGold)} gold de loot`));
@@ -667,6 +679,10 @@ public enum DashboardPage {
       ['Dano recebido/h', (a) => perHour(a.analyzer.damageTaken, a.analyzer.elapsedMs), 'low', fmt],
       ['Cura/h', (a) => perHour(a.analyzer.healingDone, a.analyzer.elapsedMs), null, fmt],
       ['Supplies/kill', (a) => ratio(a.analyzer.suppliesGold, a.analyzer.killsTotal), 'low', (v) => orDash(v, fmt)],
+      // Damage per kill is the monster's HP, so this one isolates defense from kill speed.
+      ['Recebido/kill', (a) => ratio(a.analyzer.damageTaken, a.analyzer.killsTotal), 'low', (v) => orDash(v, fmt)],
+      // What a unit of healing costs: potions vs. mana-only heals, and the potion tiers.
+      ['Supplies/1k cura', (a) => perKXp(a.analyzer.suppliesGold, a.analyzer.healingDone), 'low', (v) => orDash(v, fmt)],
       ['Lucro/1k XP', (a) => perKXp(num(a.analyzer.lootGold) - num(a.analyzer.suppliesGold), a.analyzer.xp), 'high', (v) => orDash(v, signed)],
       ['Cura ÷ recebido', (a) => ratio(a.analyzer.healingDone, a.analyzer.damageTaken), null, (v) => orDash(v, pct)],
     ];

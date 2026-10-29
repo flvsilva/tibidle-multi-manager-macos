@@ -39,8 +39,10 @@ public enum HuntInsights {
         var out: [String: Any] = [:]
         let range = reference.summary["level"] as? [String: Any]
         let low = Int(number(range?["start"]) ?? 0), high = Int(number(range?["end"]) ?? 0)
-        out["reference"] = ["id": reference.id, "endedAt": reference.endedAt, "hours": (reference.hours * 10).rounded() / 10,
-                            "profitPerHour": Int(reference.profitPerHour.rounded()), "levels": low == high ? "\(low)" : "\(low)–\(high)"]
+        var summary: [String: Any] = ["id": reference.id, "endedAt": reference.endedAt, "hours": (reference.hours * 10).rounded() / 10,
+                                      "profitPerHour": Int(reference.profitPerHour.rounded()), "levels": low == high ? "\(low)" : "\(low)–\(high)"]
+        summary["takenPerKill"] = takenPerKill(reference.summary)
+        out["reference"] = summary
         let before = reference.setup ?? [:]
         out["changes"] = ["KNIGHT", "PALADIN", "SORCERER", "DRUID", "MONK"].compactMap { vocation -> [String: Any]? in
             guard let now = setup[vocation], let then = before[vocation] else { return nil }
@@ -50,6 +52,7 @@ public enum HuntInsights {
         if let analyzer, let elapsed = number(analyzer["elapsedMs"]), elapsed >= minElapsedMs {
             let profit = ((number(analyzer["lootGold"]) ?? 0) - (number(analyzer["suppliesGold"]) ?? 0)) / (elapsed / 3_600_000)
             out["profitPerHour"] = Int(profit.rounded())
+            out["takenPerKill"] = takenPerKill(analyzer)
             if reference.profitPerHour > 0 { out["drop"] = (reference.profitPerHour - profit) / reference.profitPerHour }
             out["members"] = members(party: party, hours: elapsed / 3_600_000, reference: reference, setup: setup)
         }
@@ -110,6 +113,12 @@ public enum HuntInsights {
         }.sorted { ($0["xpPerHour"] as? Int ?? 0) > ($1["xpPerHour"] as? Int ?? 0) }
         if !maps.isEmpty { out["maps"] = Array(maps.prefix(4)) }
         return out
+    }
+
+    /// Damage taken per kill: damage dealt per kill is the monster's health, so this separates defense from kill speed.
+    static func takenPerKill(_ totals: [String: Any]) -> Int? {
+        guard let kills = number(totals["killsTotal"]), kills >= 50, let taken = number(totals["damageTaken"]) else { return nil }
+        return Int((taken / kills).rounded())
     }
 
     static func number(_ value: Any?) -> Double? {
