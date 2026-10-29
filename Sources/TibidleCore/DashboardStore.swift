@@ -268,7 +268,7 @@ public final class DashboardStore {
     }
 
     private func buildAccounts() -> [[String: Any]] {
-        live.enumerated().map { index, entry -> [String: Any] in
+        let accounts = live.enumerated().map { index, entry -> [String: Any] in
             var out = entry
             out["index"] = index
             out["label"] = names[index]
@@ -311,6 +311,28 @@ public final class DashboardStore {
                 out["insights"] = insights
             }
             if entry["status"] as? String == "hunting", let plan = levelPlan(account: index, entry) { out["levelPlan"] = plan }
+            return out
+        }
+        // Gear advice compares the accounts with each other, so it needs all of them built first.
+        return addingGearAdvice(accounts)
+    }
+
+    /// For the dev server, which proxies the running app's state.
+    public func gearAdvice(accounts: [[String: Any]]) -> [[String: Any]] { queue.sync { addingGearAdvice(accounts) } }
+
+    private func addingGearAdvice(_ accounts: [[String: Any]]) -> [[String: Any]] {
+        let members = GearAdvisor.members(accounts: accounts)
+        return accounts.enumerated().map { index, account in
+            guard account["status"] as? String == "hunting" else { return account }
+            let kills = ((account["analyzer"] as? [String: Any])?["kills"] as? [String: Any])?.compactMapValues { number($0) } ?? [:]
+            let context = SkillAdvisor.Context(spells: spells, creatures: creatures, kills: kills, crowd: 1)
+            let gear = GearAdvisor.suggestions(for: index, members: members) { type in
+                let weighted = context.weighted(type)
+                return weighted.coverage > 0 ? weighted.multiplier : nil
+            }
+            guard !gear.isEmpty else { return account }
+            var out = account
+            out["gearAdvice"] = gear
             return out
         }
     }

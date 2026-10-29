@@ -47,7 +47,7 @@ public enum CollectorScript {
       // Gear, for the equipment analysis: per slot, the item's name and its numeric stats (armor, defense, attack,
       // bonuses, tier…) plus the names of its fields; nothing that looks like an id, no strings but a few labels.
       const ID = /^id$|Id$|_id$|^uid|uuid|guid|owner|serial|token/i;
-      const LABELS = ['rarity', 'tier', 'quality', 'type', 'slot', 'element', 'grade'];
+      const LABELS = ['rarity', 'tier', 'quality', 'type', 'slot', 'element', 'grade', 'shootType', 'wandType', 'weaponType', 'vocation'];
       const stats = (o, out, prefix) => {
         if (!isObject(o)) return;
         for (const [k, v] of Object.entries(o).slice(0, 40)) {
@@ -66,7 +66,12 @@ public enum CollectorScript {
           const st = {};
           stats(item, st, '');
           stats(item.attrs, st, 'attrs.');
-          for (const key of ['bonus', 'bonuses', 'attributes', 'stats', 'refine', 'imbuements']) stats(item[key], st, key + '.');
+          for (const key of ['bonus', 'bonuses', 'attributes', 'stats', 'refine', 'forja', 'imbue']) stats(item[key], st, key + '.');
+          if (Array.isArray(item.imbuements)) item.imbuements.slice(0, 3).forEach((x, i) => {
+            stats(x, st, `imbuements.${i}.`);
+            if (isObject(x) && typeof x.name === 'string') st[`imbuements.${i}.name`] = x.name.slice(0, 32);
+          });
+          else stats(item.imbuements, st, 'imbuements.');
           out[slot.slice(0, 24)] = { name: typeof item.name === 'string' ? item.name.slice(0, 64) : undefined, stats: st,
                                      fields: fields(item), attrFields: fields(item.attrs) };
         }
