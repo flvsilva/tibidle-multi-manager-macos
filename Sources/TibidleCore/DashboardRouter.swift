@@ -77,6 +77,9 @@ public enum DashboardRouter {
         case "/api/presets/compare":
             guard let id = Int(query["id"] ?? ""), let account = Int(query["account"] ?? "") else { return text(400, "Parâmetros inválidos") }
             return jsonResponse(store.presetComparison(id: id, account: account))
+        case "/api/hunts/setup":
+            guard let id = Int(query["id"] ?? "") else { return text(400, "Parâmetros inválidos") }
+            return jsonResponse(store.huntSetup(id: id, compare: Int(query["compare"] ?? "")))
         case "/api/hunts.csv":
             return HTTPResponse(status: 200, contentType: "text/csv; charset=utf-8", body: store.huntsCSV(), filename: "tibidle-hunts.csv")
         case "/api/history.csv":

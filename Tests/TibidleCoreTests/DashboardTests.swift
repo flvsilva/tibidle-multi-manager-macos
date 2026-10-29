@@ -176,6 +176,31 @@ final class DashboardStoreTests: XCTestCase {
         XCTAssertEqual(rows[1]["profitPerHour"] as? Int, 20_000)
     }
 
+    func testHuntKeepsItsBattleSetupAndComparesWithAnother() {
+        let store = makeStore()
+        let party = #"{"party":[{"name":"Zolp","vocation":"DRUID","level":80,"suppliesGold":900}]}"#
+        store.ingest(account: 2, json: #"{"type":"welcome","data":{"battleConfigs":{"DRUID":{"skills":["Ice Strike"],"heals":[{"name":"Exura Vita","percent":60}],"manaPotion":{"name":"Strong Mana Potion","percent":30}}}}}"#)
+        store.ingest(account: 2, json: #"{"type":"hunt_started","data":{"huntId":151,"state":\#(party)}}"#)
+        store.ingest(account: 2, json: #"{"type":"ended","data":{"summary":{"huntId":151,"elapsedSec":3600,"balance":10}}}"#)
+        clock += 60
+        store.ingest(account: 2, json: #"{"type":"resume","data":{"huntId":151,"state":\#(party),"battleConfigs":{"DRUID":{"skills":["Ice Strike"],"heals":[{"name":"Exura Vita","percent":90}],"manaPotion":{"name":"Strong Mana Potion","percent":30}}}}}"#)
+        store.ingest(account: 2, json: #"{"type":"ended","data":{"summary":{"huntId":151,"elapsedSec":3600,"balance":20}}}"#)
+
+        let hunts = object(store.huntsJSON(limit: 10))["hunts"] as! [[String: Any]]
+        XCTAssertEqual(hunts.count, 2)
+        XCTAssertEqual(hunts.map { $0["hasSetup"] as? Bool }, [true, true])
+        XCTAssertNil(hunts[0]["setup"], "the setup itself stays out of the hunts list")
+        let newer = hunts[0]["id"] as! Int, older = hunts[1]["id"] as! Int
+
+        let result = object(store.huntSetup(id: newer, compare: older))
+        let druid = (result["vocations"] as! [[String: Any]]).first!
+        XCTAssertEqual(druid["label"] as? String, "Druid")
+        XCTAssertEqual(druid["differences"] as? [String], ["Exura Vita: cura abaixo de 90% de vida (era 60%)"])
+        XCTAssertTrue((druid["steps"] as! [String]).contains("Cura 1: Exura Vita abaixo de 90% de vida"))
+        XCTAssertNotNil(object(store.huntSetup(id: 9999, compare: nil))["error"])
+        XCTAssertEqual(DashboardRouter.respond(method: "GET", target: "/api/hunts/setup?id=\(newer)&compare=\(older)", store: store).status, 200)
+    }
+
     func testRejectsInvalidInput() {
         let store = makeStore()
         store.ingest(account: 7, json: #"{"type":"welcome","data":{}}"#)

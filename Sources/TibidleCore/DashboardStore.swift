@@ -175,6 +175,9 @@ public final class DashboardStore {
                      "level": number(member["level"]) ?? 0, "suppliesGold": number(member["suppliesGold"]) ?? 0]
                 }
             }
+            // The battle setup this hunt ran with, so two hunts can later be compared ("what changed?").
+            let setup = presetVocations(entry).reduce(into: [String: Any]()) { $0[$1.vocation] = BattlePreset.normalize($1.config) }
+            if !setup.isEmpty { summary["setup"] = setup }
             entry["lastSummary"] = summary
             recordCalibration(account: account, summary: summary, at: date)
             // Until the next welcome refreshes the server's counters, fold the finished hunt in locally.
@@ -308,11 +311,14 @@ public final class DashboardStore {
     public func huntsJSON(limit: Int) -> Data {
         queue.sync {
             var hunts: [[String: Any]] = []
-            query("SELECT account, summary FROM runs ORDER BY ended_at DESC LIMIT ?", [.int(limit)]) { row in
+            query("SELECT account, summary, rowid FROM runs ORDER BY ended_at DESC LIMIT ?", [.int(limit)]) { row in
                 guard let text = sqlite3_column_text(row, 1),
                       var summary = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)) as? [String: Any]
                 else { return }
                 let account = Int(sqlite3_column_int(row, 0))
+                summary["id"] = Int(sqlite3_column_int64(row, 2))
+                summary["hasSetup"] = summary["setup"] != nil
+                summary["setup"] = nil
                 summary["account"] = account
                 summary["huntTitle"] = number(summary["huntId"]).flatMap { catalog.hunt(id: Int($0))?.title }
                 summary["label"] = names.indices.contains(account) ? names[account] : "Conta \(account + 1)"
@@ -775,6 +781,36 @@ extension DashboardStore {
     }
 
     public func deletePreset(id: Int) { queue.sync { run("DELETE FROM presets WHERE id = ?", [.int(id)]) } }
+
+    /// The battle setup a finished hunt ran with, per vocation, and what changed since another hunt (`compare`).
+    public func huntSetup(id: Int, compare: Int?) -> Data {
+        queue.sync {
+            func setup(_ rowid: Int) -> [String: [String: Any]]? {
+                var found: [String: [String: Any]]?
+                query("SELECT summary FROM runs WHERE rowid = ?", [.int(rowid)]) { row in
+                    guard let text = sqlite3_column_text(row, 0),
+                          let summary = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)) as? [String: Any]
+                    else { return }
+                    found = (summary["setup"] as? [String: Any])?.compactMapValues { $0 as? [String: Any] }
+                }
+                return found
+            }
+            guard let mine = setup(id) else { return json(["error": "Esta hunt foi gravada antes do app guardar o setup."]) }
+            let other = compare.flatMap(setup)
+            let vocations = ["KNIGHT", "PALADIN", "SORCERER", "DRUID", "MONK"].filter { mine[$0] != nil || other?[$0] != nil }
+            let rows = vocations.map { vocation -> [String: Any] in
+                var row: [String: Any] = ["vocation": vocation, "label": BattlePreset.vocationLabel(vocation)]
+                let preset = mine[vocation].map { BattlePreset(vocation: vocation, huntId: nil, huntTitle: "", config: $0) }
+                row["steps"] = preset?.steps() ?? []
+                if let other {
+                    if let preset, let before = other[vocation] { row["differences"] = preset.differences(from: before) }
+                    else { row["differences"] = [preset == nil ? "Não estava nesta hunt" : "Não estava na outra hunt"] }
+                }
+                return row
+            }
+            return json(["vocations": rows, "compared": other != nil])
+        }
+    }
 
     /// Differences from the account's current configuration, validation and the modeled damage of both.
     public func presetComparison(id: Int, account: Int) -> Data {

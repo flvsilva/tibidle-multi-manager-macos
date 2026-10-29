@@ -197,6 +197,12 @@ public enum DashboardPage {
         <div class="modal-body" id="presets-body"></div>
       </div>
     </div>
+    <div class="modal" id="setup-modal" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+      <div class="modal-box">
+        <div class="modal-head"><h2 id="setup-title">Setup da hunt</h2><button type="button" id="setup-close" aria-label="Fechar">×</button></div>
+        <div class="modal-body" id="setup-body"></div>
+      </div>
+    </div>
     <div class="modal" id="skills-modal" role="dialog" aria-modal="true" aria-labelledby="skills-title">
       <div class="modal-box">
         <div class="modal-head"><h2 id="skills-title">Skills</h2><button type="button" id="skills-close" aria-label="Fechar">×</button></div>
@@ -706,7 +712,7 @@ public enum DashboardPage {
 
     $('skills-close').addEventListener('click', closeSkills);
     $('skills-modal').addEventListener('click', (e) => { if (e.target === $('skills-modal')) closeSkills(); });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSkills(); closePresets(); } });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSkills(); closePresets(); closeSetup(); } });
 
     async function refreshState() {
       try {
@@ -861,9 +867,12 @@ public enum DashboardPage {
     }
 
     // ---- hunts table ----
+    let lastHunts = [];
+    const openDetails = new Set();
     async function refreshHunts() {
       try {
         const { hunts } = await getJSON('/api/hunts?limit=100');
+        lastHunts = hunts;
         if (!hunts.length) { $('hunts').replaceChildren(el('div', { class: 'empty' }, 'Nenhuma hunt encerrada registrada ainda.')); return; }
         $('hunts').replaceChildren(el('table', null,
           el('thead', null, el('tr', null, ['Fim', 'Conta', 'Hunt', 'Personagens', 'Duração', 'Motivo'].map((h) => el('th', null, h)),
@@ -885,11 +894,17 @@ public enum DashboardPage {
       ];
       const members = (h.members || []).filter((m) => num(m.suppliesGold) > 0);
       const spent = members.reduce((sum, m) => sum + num(m.suppliesGold), 0);
-      const tr = el('tr', { class: 'detail', hidden: '' }, el('td', { colspan: '13' }, el('div', { class: 'detail-grid' }, cells),
+      let setupBtn = null;
+      if (h.hasSetup) {
+        setupBtn = el('button', { class: 'pr-btn', type: 'button', style: { marginTop: '8px' } }, 'Setup desta hunt / comparar com outra');
+        setupBtn.addEventListener('click', (e) => { e.stopPropagation(); openSetup(h); });
+      }
+      const tr = el('tr', { class: 'detail' }, el('td', { colspan: '13' }, el('div', { class: 'detail-grid' }, cells),
         spent > 0 ? el('div', { style: { marginTop: '6px' } }, 'Supplies por membro: ' + members.slice().sort((x, y) => num(y.suppliesGold) - num(x.suppliesGold))
           .map((m) => `${vocation(m.vocation)} ${Math.round(100 * num(m.suppliesGold) / spent)}% (${fmt(m.suppliesGold)})`).join(' · ')) : null,
         el('div', { style: { marginTop: '6px' } }, 'Mais abatidos: ' + list(h.kills, 6)),
-        el('div', null, 'Drops: ' + list(h.drops, 12))));
+        el('div', null, 'Drops: ' + list(h.drops, 12)), setupBtn));
+      tr.hidden = !openDetails.has(h.id);
       h._detail = tr;
       return tr;
     }
@@ -907,9 +922,59 @@ public enum DashboardPage {
             el('td', { class: 'n' }, fmt(h.lootGold)), el('td', { class: 'n' }, fmt(h.suppliesGold)),
             el('td', { class: 'n ' + (num(h.balance) >= 0 ? 'pos' : 'neg') }, signed(h.balance)),
             el('td', { class: 'n' }, fmt(h.deaths)));
-      row.addEventListener('click', () => { h._detail.hidden = !h._detail.hidden; });
+      row.addEventListener('click', () => {
+        h._detail.hidden = !h._detail.hidden;
+        if (h._detail.hidden) openDetails.delete(h.id); else openDetails.add(h.id);
+      });
       return row;
     }
+
+    // ---- battle setup of a finished hunt, and what changed since another one ----
+    let setupRun = null, setupCompare = null;
+    const runLabel = (h) => `${dateTime(h.endedAt)} · ${h.label} · ${h.huntTitle || `#${h.huntId}`} · ${signed(num(h.elapsedSec) ? num(h.balance) / (num(h.elapsedSec) / 3600) : 0)}/h`;
+    function openSetup(h) {
+      setupRun = h;
+      // Default: the previous hunt of the same account on the same map, else the previous one on that map.
+      const older = lastHunts.filter((x) => x.hasSetup && x.id !== h.id && x.endedAt < h.endedAt);
+      const pick = older.find((x) => x.account === h.account && x.huntId === h.huntId) || older.find((x) => x.huntId === h.huntId) || null;
+      setupCompare = pick ? pick.id : null;
+      $('setup-modal').classList.add('open');
+      renderSetup();
+    }
+    async function renderSetup() {
+      const h = setupRun;
+      if (!h) return;
+      $('setup-title').textContent = `Setup · ${h.label} · ${h.huntTitle || `#${h.huntId}`}`;
+      const picker = el('select', { class: 'pr-input', 'aria-label': 'Comparar com' }, el('option', { value: '' }, 'Não comparar'),
+        lastHunts.filter((x) => x.hasSetup && x.id !== h.id).map((x) => el('option', { value: String(x.id) }, runLabel(x))));
+      picker.value = setupCompare === null ? '' : String(setupCompare);
+      picker.addEventListener('change', () => { setupCompare = picker.value ? Number(picker.value) : null; renderSetup(); });
+      const head = el('div', { class: 'pr-section' }, el('div', { class: 'madvice' }, `Esta hunt: ${runLabel(h)}`),
+        el('div', { class: 'pr-row' }, el('span', null, 'Comparar com'), picker));
+      $('setup-body').replaceChildren(head, el('div', { class: 'empty' }, 'Carregando…'));
+      let data;
+      try { data = await getJSON(`/api/hunts/setup?id=${h.id}${setupCompare === null ? '' : `&compare=${setupCompare}`}`); }
+      catch (_) { data = { error: 'Falha ao carregar.' }; }
+      if (setupRun !== h) return;
+      const parts = [];
+      if (data.error) parts.push(el('div', { class: 'pr-msg bad' }, data.error));
+      for (const v of data.vocations || []) {
+        const box = el('div', { class: 'sk-member' }, el('div', { class: 'sk-top' }, el('b', null, v.label)));
+        if (data.compared) {
+          const diff = v.differences || [];
+          box.append(el('div', { class: 'sk-note ' + (diff.length ? 'warn' : '') }, diff.length
+            ? el('div', null, el('b', null, 'O que mudou em relação à outra hunt'), el('ul', { style: { margin: '4px 0 0', paddingLeft: '18px' } }, diff.map((d) => el('li', null, d))))
+            : 'Igual à outra hunt.'));
+        }
+        if ((v.steps || []).length) box.append(el('ol', { style: { margin: '8px 0 0', paddingLeft: '20px', fontSize: '12px' } }, v.steps.map((x) => el('li', null, x))));
+        parts.push(box);
+      }
+      parts.push(el('div', { class: 'sk-foot' }, 'O setup é o que o app leu ao abrir o jogo ou retomar a hunt. Se você mudou a configuração no meio da hunt sem recarregar o jogo, a mudança não aparece aqui.'));
+      $('setup-body').replaceChildren(head, ...parts);
+    }
+    const closeSetup = () => { setupRun = null; $('setup-modal').classList.remove('open'); };
+    $('setup-close').addEventListener('click', closeSetup);
+    $('setup-modal').addEventListener('click', (e) => { if (e.target === $('setup-modal')) closeSetup(); });
 
     // ---- daily totals ----
     async function refreshDaily() {

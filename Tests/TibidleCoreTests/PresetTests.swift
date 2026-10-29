@@ -62,7 +62,16 @@ final class PresetTests: XCTestCase {
         XCTAssertTrue(diff.contains("Adiciona a skill Ultimate Ice Strike"))
         XCTAssertTrue(diff.contains("Remove a skill Flame Strike"))
         XCTAssertTrue(diff.contains("Ice Strike: mínimo de criaturas de 4 para 2"))
-        XCTAssertTrue(diff.contains("Muda as curas"))
+        XCTAssertTrue(diff.contains("Curas: de nenhuma para Exura Vita abaixo de 60%"))
+        XCTAssertTrue(diff.contains("Poção de mana: de nenhuma para Great Mana Potion abaixo de 30% de mana"))
+        XCTAssertTrue(diff.contains("Suportes: de nenhuma para Utamo Vita"))
+        var later = config
+        later["heals"] = [["name": "Exura Vita", "percent": 85]]
+        later["manaPotion"] = ["name": "Strong Mana Potion", "percent": 50]
+        XCTAssertEqual(BattlePreset(vocation: "DRUID", huntId: 10, huntTitle: "", config: later).differences(from: config), [
+            "Exura Vita: cura abaixo de 85% de vida (era 60%)",
+            "Poção de mana: de Great Mana Potion abaixo de 30% de mana para Strong Mana Potion abaixo de 50% de mana",
+        ])
         XCTAssertEqual(preset().differences(from: config), [], "identical configs differ in nothing")
     }
 

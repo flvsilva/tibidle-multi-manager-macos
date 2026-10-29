@@ -175,11 +175,40 @@ public struct BattlePreset: Equatable {
         for name in common where ((a[name] as? Int) ?? 1) != ((b[name] as? Int) ?? 1) {
             out.append("\(name): mínimo de criaturas de \((b[name] as? Int) ?? 1) para \((a[name] as? Int) ?? 1)")
         }
-        if !NSDictionary(dictionary: ["h": config["heals"] ?? []]).isEqual(to: ["h": other["heals"] ?? []]) { out.append("Muda as curas") }
-        if !NSDictionary(dictionary: config["manaPotion"] as? [String: Any] ?? [:]).isEqual(to: other["manaPotion"] as? [String: Any] ?? [:]) {
-            out.append("Muda a poção de mana")
-        }
-        if !NSArray(array: config["supports"] as? [Any] ?? []).isEqual(to: other["supports"] as? [Any] ?? []) { out.append("Muda os suportes") }
+        out += Self.healDifferences(from: Self.heals(other), to: Self.heals(config))
+        let potion = Self.potion(config), previous = Self.potion(other)
+        if potion != previous { out.append("Poção de mana: de \(previous ?? "nenhuma") para \(potion ?? "nenhuma")") }
+        let supports = (config["supports"] as? [Any] ?? []).compactMap { $0 as? String }
+        let before = (other["supports"] as? [Any] ?? []).compactMap { $0 as? String }
+        if supports != before { out.append("Suportes: de \(Self.list(before)) para \(Self.list(supports))") }
         return out
     }
+
+    private static func heals(_ config: [String: Any]) -> [(name: String, percent: Int?)] {
+        (config["heals"] as? [Any] ?? []).compactMap { item in
+            (item as? [String: Any]).flatMap { h in (h["name"] as? String).map { ($0, h["percent"] as? Int) } }
+        }
+    }
+
+    private static func healText(_ heal: (name: String, percent: Int?)) -> String {
+        heal.name + (heal.percent.map { " abaixo de \($0)%" } ?? "")
+    }
+
+    /// Same heals in the same order: one line per changed threshold; otherwise the whole list before and after.
+    private static func healDifferences(from before: [(name: String, percent: Int?)], to after: [(name: String, percent: Int?)]) -> [String] {
+        if before.map(\.name) == after.map(\.name) {
+            return zip(before, after).compactMap { old, new in
+                old.percent == new.percent ? nil
+                    : "\(new.name): cura abaixo de \(new.percent.map { "\($0)%" } ?? "?") de vida (era \(old.percent.map { "\($0)%" } ?? "?"))"
+            }
+        }
+        return ["Curas: de \(list(before.map(healText))) para \(list(after.map(healText)))"]
+    }
+
+    private static func potion(_ config: [String: Any]) -> String? {
+        guard let potion = config["manaPotion"] as? [String: Any], let name = potion["name"] as? String else { return nil }
+        return name + ((potion["percent"] as? Int).map { " abaixo de \($0)% de mana" } ?? "")
+    }
+
+    private static func list(_ items: [String]) -> String { items.isEmpty ? "nenhuma" : items.joined(separator: ", ") }
 }
