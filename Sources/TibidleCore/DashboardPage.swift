@@ -244,6 +244,19 @@ public enum DashboardPage {
       </section>
 
       <section class="section">
+        <div class="toolbar"><h2>Lucro por nível</h2>
+          <select id="level-hunt" aria-label="Hunt"></select>
+          <select id="level-metric" aria-label="Medida">
+            <option value="profit">Lucro/h</option><option value="supplies">Supplies/h</option><option value="xp">XP/h</option><option value="kills">Kills/h</option>
+          </select>
+        </div>
+        <div class="legend" id="level-legend"></div>
+        <div class="chart" id="chart-level"><h3 id="level-title">Lucro por hora em cada hunt encerrada, pelo nível</h3></div>
+        <div class="sk-foot">Cada ponto é uma hunt encerrada de 30 min ou mais; quanto maior o ponto, mais longa a hunt.</div>
+        <details><summary>Ver dados em tabela</summary><div class="table-wrap" id="level-table"></div></details>
+      </section>
+
+      <section class="section">
         <div class="toolbar"><h2>Totais por dia</h2></div>
         <div class="table-wrap" id="daily"></div>
       </section>
@@ -988,6 +1001,103 @@ public enum DashboardPage {
     $('setup-close').addEventListener('click', closeSetup);
     $('setup-modal').addEventListener('click', (e) => { if (e.target === $('setup-modal')) closeSetup(); });
 
+    // ---- yield by level on one map: one dot per finished hunt ----
+    const LEVEL_METRICS = {
+      profit: ['Lucro por hora', (h, hours) => num(h.balance) / hours, signed],
+      supplies: ['Supplies por hora', (h, hours) => num(h.suppliesGold) / hours, fmt],
+      xp: ['XP por hora', (h, hours) => num(h.xp) / hours, fmt],
+      kills: ['Kills por hora', (h, hours) => num(h.killsTotal) / hours, fmt],
+    };
+    let levelRuns = [];
+    async function refreshLevels() {
+      try {
+        const { hunts } = await getJSON('/api/hunts?limit=500');
+        levelRuns = hunts.filter((h) => num(h.elapsedSec) >= 1800 && h.level && h.huntId != null);
+        const hours = new Map(), titles = new Map();
+        for (const h of levelRuns) {
+          hours.set(h.huntId, (hours.get(h.huntId) || 0) + num(h.elapsedSec) / 3600);
+          titles.set(h.huntId, h.huntTitle || `#${h.huntId}`);
+        }
+        const select = $('level-hunt');
+        let keep = select.value;
+        if (!keep) { try { keep = localStorage.getItem('levelHunt') || ''; } catch (_) {} }
+        const order = [...hours.entries()].sort((a, b) => b[1] - a[1]);
+        select.replaceChildren(...order.map(([id, h]) => el('option', { value: String(id) }, `${titles.get(id)} (${h.toFixed(0)}h)`)));
+        if (order.some(([id]) => String(id) === keep)) select.value = keep;
+        renderLevels();
+      } catch (_) {}
+    }
+    function renderLevels() {
+      const host = $('chart-level');
+      host.querySelector('svg')?.remove();
+      host.querySelector('.empty')?.remove();
+      const huntId = Number($('level-hunt').value);
+      const [title, value, format] = LEVEL_METRICS[$('level-metric').value] || LEVEL_METRICS.profit;
+      $('level-title').textContent = `${title} em cada hunt encerrada, pelo nível`;
+      const points = levelRuns.filter((h) => h.huntId === huntId).map((h) => {
+        const hours = num(h.elapsedSec) / 3600;
+        return { h, hours, level: (num(h.level.start || h.level.end) + num(h.level.end)) / 2, v: value(h, hours) };
+      });
+      const accounts = [...new Set(points.map((p) => p.h.account))].sort();
+      $('level-legend').replaceChildren(...accounts.map((i) => el('span', null,
+        el('span', { class: 'swatch', style: { background: SERIES[i], borderRadius: '50%' } }), (lastAccounts[i] || {}).label || `Conta ${i + 1}`)));
+      $('level-table').replaceChildren(points.length ? el('table', null,
+        el('thead', null, el('tr', null, el('th', null, 'Fim'), el('th', null, 'Conta'), el('th', { class: 'n' }, 'Nível'), el('th', { class: 'n' }, 'Horas'), el('th', { class: 'n' }, title))),
+        el('tbody', null, points.slice().sort((a, b) => a.level - b.level).map((p) => el('tr', null, el('td', null, dateTime(p.h.endedAt)), el('td', null, p.h.label),
+          el('td', { class: 'n' }, p.level.toLocaleString('pt-BR')), el('td', { class: 'n' }, p.hours.toFixed(1)), el('td', { class: 'n' }, format(p.v))))))
+        : el('div', { class: 'empty' }, 'Sem hunts.'));
+      if (!points.length) { host.append(el('div', { class: 'empty' }, 'Ainda sem hunts de 30+ min encerradas nesta hunt.')); return; }
+      const W = Math.max(host.clientWidth, 300), H = 240, L = 56, R = 16, T = 12, B = 30;
+      let x0 = Math.min(...points.map((p) => p.level)), x1 = Math.max(...points.map((p) => p.level));
+      if (x1 - x0 < 4) { x0 -= 2; x1 += 2; }
+      let lo = Math.min(0, ...points.map((p) => p.v)), hi = Math.max(0, ...points.map((p) => p.v));
+      const step = niceStep(Math.max(hi - lo, 1));
+      hi = Math.max(Math.ceil(hi / step) * step, step); lo = Math.floor(lo / step) * step;
+      const pad = (x1 - x0) * 0.04;
+      x0 -= pad; x1 += pad;
+      const x = (v) => L + (v - x0) / (x1 - x0) * (W - L - R);
+      const y = (v) => T + (hi - v) / (hi - lo) * (H - T - B);
+      const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': $('level-title').textContent, style: { height: `${H}px` } });
+      const axis = svg('g', { class: 'axis' });
+      for (let v = lo; v <= hi + step / 2; v += step) {
+        axis.append(svg('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: Math.abs(v) < step / 2 ? 'var(--axis)' : 'var(--grid)', 'stroke-width': 1 }));
+        const label = svg('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }); label.textContent = axisFmt(v); axis.append(label);
+      }
+      const levelStep = Math.max(1, Math.ceil((x1 - x0) / 8));
+      for (let v = Math.ceil(x0 / levelStep) * levelStep; v <= x1; v += levelStep) {
+        const label = svg('text', { x: x(v), y: H - 10, 'text-anchor': 'middle' }); label.textContent = String(v); axis.append(label);
+      }
+      const caption = svg('text', { x: W - R, y: H - 10, 'text-anchor': 'end' }); caption.textContent = 'nível'; axis.append(caption);
+      root.append(axis);
+      const maxHours = Math.max(...points.map((p) => p.hours));
+      const tip = $('tip');
+      for (const p of points.slice().sort((a, b) => b.hours - a.hours)) {
+        const r = 4 + 5 * Math.sqrt(p.hours / maxHours);
+        const dot = svg('circle', { cx: x(p.level), cy: y(p.v), r, fill: SERIES[p.h.account], stroke: 'var(--surface)', 'stroke-width': 2, 'fill-opacity': 0.9 });
+        // A larger invisible target than the dot, for touch and small marks.
+        const hit = svg('circle', { cx: x(p.level), cy: y(p.v), r: Math.max(r, 12), fill: 'transparent' });
+        const show = (ev) => {
+          tip.replaceChildren(el('div', { class: 't' }, dateTime(p.h.endedAt)),
+            el('div', { class: 'r' }, el('span', { class: 'swatch', style: { background: SERIES[p.h.account] } }), p.h.label, el('b', null, `${format(p.v)}/h`)),
+            el('div', { class: 'r' }, 'Nível', el('b', null, p.h.level.start !== p.h.level.end ? `${p.h.level.start}→${p.h.level.end}` : String(p.h.level.end))),
+            el('div', { class: 'r' }, 'Duração', el('b', null, duration(p.hours * 3600000))));
+          tip.style.display = 'block';
+          const left = ev.clientX + 14 + tip.offsetWidth > window.innerWidth ? ev.clientX - tip.offsetWidth - 14 : ev.clientX + 14;
+          tip.style.left = `${left + window.scrollX}px`;
+          tip.style.top = `${ev.clientY + window.scrollY - tip.offsetHeight - 10}px`;
+          dot.setAttribute('stroke', 'var(--ink)');
+        };
+        const hide = () => { tip.style.display = 'none'; dot.setAttribute('stroke', 'var(--surface)'); };
+        hit.addEventListener('pointermove', show);
+        hit.addEventListener('pointerdown', show);
+        hit.addEventListener('pointerleave', hide);
+        root.append(dot, hit);
+      }
+      host.append(root);
+    }
+    $('level-hunt').addEventListener('change', () => { try { localStorage.setItem('levelHunt', $('level-hunt').value); } catch (_) {} renderLevels(); });
+    $('level-metric').addEventListener('change', renderLevels);
+
     // ---- daily totals ----
     async function refreshDaily() {
       try {
@@ -1062,13 +1172,13 @@ public enum DashboardPage {
       if (button) button.click();
     } catch (_) {}
     let resizeTimer;
-    addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderCharts, 150); });
+    addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { renderCharts(); renderLevels(); }, 150); });
 
-    refreshState().then(() => { refreshHistory(); refreshHunts(); refreshDaily(); refreshRanking(); });
+    refreshState().then(() => { refreshHistory(); refreshHunts(); refreshDaily(); refreshRanking(); refreshLevels(); });
     setInterval(refreshState, 3000);
     setInterval(refreshHistory, 60000);
     setInterval(refreshHunts, 30000);
-    setInterval(() => { refreshDaily(); refreshRanking(); }, 60000);
+    setInterval(() => { refreshDaily(); refreshRanking(); refreshLevels(); }, 60000);
     </script>
     </body>
     </html>
