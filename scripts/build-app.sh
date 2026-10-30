@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds dist/Tibidle Multi-Manager.app and a ZIP for distribution.
+# Builds dist/Tibidle Multi-Manager.app, plus a DMG and a ZIP for distribution.
 # Reads only the source tree: it never touches your profiles or settings.
 set -euo pipefail
 cd "${0:a:h}/.."
@@ -61,5 +61,14 @@ done
 
 rm -f "$DIST/TibidleMultiManager-macOS.zip"
 ditto -c -k --keepParent "$APP" "$DIST/TibidleMultiManager-macOS.zip"
+# The DMG opens to the app next to an Applications link: drag one onto the other to install.
+DMG="$DIST/TibidleMultiManager-macOS.dmg"
+mkdir -p "$WORK/dmg"
+ditto "$APP" "$WORK/dmg/$APP_NAME.app"
+ln -s /Applications "$WORK/dmg/Applications"
+rm -f "$DMG"
+hdiutil create -quiet -volname "$APP_NAME" -srcfolder "$WORK/dmg" -fs HFS+ -format UDZO -ov "$DMG"
+
 echo "App:    $APP"
+echo "DMG:    $DMG"
 echo "Pacote: $DIST/TibidleMultiManager-macOS.zip"

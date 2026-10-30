@@ -22,6 +22,12 @@ Contato: flv.silva@yahoo.com.br
 
 **Requisitos:** macOS 14 Sonoma ou mais recente, Apple Silicon ou Intel. É necessária internet para jogar.
 
+## Baixar
+
+Baixe **TibidleMultiManager-macOS.dmg** na [última release](https://github.com/flvsilva/tibidle-multi-manager-macos/releases/latest), abra e arraste o app para **Aplicativos**.
+
+O app não tem assinatura da Apple (Developer ID), então na primeira abertura o macOS bloqueia: clique em **OK**, vá em **Ajustes do Sistema → Privacidade e Segurança** e clique em **Abrir Mesmo Assim** no aviso do Tibidle Multi-Manager. Pelo Terminal: `xattr -dr com.apple.quarantine "/Applications/Tibidle Multi-Manager.app"`.
+
 ## Compilar e instalar
 
 Requer as Command Line Tools do Xcode (`xcode-select --install`) ou o Xcode.
@@ -33,9 +39,11 @@ Requer as Command Line Tools do Xcode (`xcode-select --install`) ou o Xcode.
 Resultado:
 
 - `dist/Tibidle Multi-Manager.app` — arraste para `/Applications`.
-- `dist/TibidleMultiManager-macOS.zip` — pacote para distribuir (binário universal arm64 + x86_64).
+- `dist/TibidleMultiManager-macOS.dmg` e `dist/TibidleMultiManager-macOS.zip` — pacotes para distribuir (binário universal arm64 + x86_64).
 
-O app é assinado *ad hoc* (sem Developer ID). Ao abrir um ZIP baixado da internet, o Gatekeeper pode bloquear: clique com o botão direito no app → **Abrir**, ou rode `xattr -dr com.apple.quarantine "/Applications/Tibidle Multi-Manager.app"`.
+O app é assinado *ad hoc* (sem Developer ID); ao abrir um pacote baixado da internet, libere como em [Baixar](#baixar).
+
+Para publicar uma versão: `./scripts/release.sh 1.0.0` (com tudo commitado e enviado; roda os testes, gera os pacotes, cria a tag `v1.0.0` e a release no GitHub com o DMG e o ZIP).
 
 ## Como usar
 
