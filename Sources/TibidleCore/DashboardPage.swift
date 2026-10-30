@@ -523,8 +523,9 @@ public enum DashboardPage {
             el('td', { class: 'muted-text' }, slot), el('td', null, item.name || '—'),
             el('td', { class: 'muted-text', style: { whiteSpace: 'normal' } }, statText(item.stats)))))));
       }
-      box.append(el('div', { class: 'sk-foot' }, 'Defesa: quem mais apanha (menor HP média) contra o melhor item que suas outras contas usam na mesma vocação. ' +
-        'Arma: o elemento da wand/rod contra os monstros desta hunt.'));
+      box.append(el('div', { class: 'sk-foot' }, 'Defesa: quem mais apanha (menor HP média) contra o melhor item que suas outras contas usam na mesma vocação, ' +
+        'pelas regras do jogo: armadura tira ~0,75 por ponto de cada golpe corpo a corpo, o escudo bloqueia até 1 golpe por segundo, a proteção física age no golpe inteiro ' +
+        'e magia só sente a proteção do elemento dela. Arma: o elemento da wand/rod contra os monstros desta hunt.'));
       return box;
     }
     function panelBody(a, tab) {

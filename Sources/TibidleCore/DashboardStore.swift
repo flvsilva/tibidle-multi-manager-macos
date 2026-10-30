@@ -326,7 +326,8 @@ public final class DashboardStore {
             guard account["status"] as? String == "hunting" else { return account }
             let kills = ((account["analyzer"] as? [String: Any])?["kills"] as? [String: Any])?.compactMapValues { number($0) } ?? [:]
             let context = SkillAdvisor.Context(spells: spells, creatures: creatures, kills: kills, crowd: 1)
-            let gear = GearAdvisor.suggestions(for: index, members: members) { type in
+            let combat = GearAdvisor.combat(analyzer: account["analyzer"] as? [String: Any])
+            let gear = GearAdvisor.suggestions(for: index, members: members, combat: combat) { type in
                 let weighted = context.weighted(type)
                 return weighted.coverage > 0 ? weighted.multiplier : nil
             }

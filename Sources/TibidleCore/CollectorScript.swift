@@ -84,6 +84,7 @@ public enum CollectorScript {
         out.skillLevels = {
           melee: num(isObject(sk.melee) ? sk.melee.value : undefined), distance: num(isObject(sk.distance) ? sk.distance.value : undefined),
           magic: num(isObject(sk.magic) ? sk.magic.value : undefined),
+          shielding: num(isObject(sk.shielding) ? sk.shielding.value : undefined),
         };
         out.weaponAttack = weaponAttack(m.equipment);
         out.gear = gear(m.equipment);
