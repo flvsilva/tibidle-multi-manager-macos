@@ -162,6 +162,39 @@ public enum CollectorScript {
         semana: pick(p.semana, ['monstros']),
       } : undefined;
 
+      // Hits the party takes, tallied on every frame (only one frame in FRAME_INTERVAL_MS is posted) and sent with
+      // the next posted one: creature melee (`mhit`, always on the knight) and creature spells (`mcast`) per element,
+      // by creature name. Creature ids only map to names here (from `spawn`); they never leave the page.
+      const COMBAT = /"(mhit|mcast|spawn)"/;
+      const names = new Map();
+      let hits = null;
+      const tally = (d) => {
+        if (!Array.isArray(d.events)) return;
+        for (const e of d.events.slice(0, 500)) {
+          if (!isObject(e)) continue;
+          if (e.kind === 'spawn' && typeof e.name === 'string') {
+            if (names.size > 2000) names.clear();
+            names.set(e.id, e.name.slice(0, 40));
+            continue;
+          }
+          if (e.kind !== 'mhit' && e.kind !== 'mcast') continue;
+          hits = hits || { melee: { hits: 0, amount: 0, max: 0 }, magic: {}, creatures: {} };
+          const name = names.get(e.id) || '?';
+          if (!hits.creatures[name] && Object.keys(hits.creatures).length >= 30) continue;
+          const c = hits.creatures[name] = hits.creatures[name] || { hits: 0, melee: 0, max: 0, magic: 0 };
+          if (e.kind === 'mhit') {
+            const amount = num(e.amount) || 0;
+            hits.melee.hits += 1; hits.melee.amount += amount; hits.melee.max = Math.max(hits.melee.max, amount);
+            c.hits += 1; c.melee += amount; c.max = Math.max(c.max, amount);
+          } else {
+            const amount = Array.isArray(e.hits) ? e.hits.slice(0, 4).reduce((sum, h) => sum + ((isObject(h) && num(h.amount)) || 0), 0) : num(e.amount) || 0;
+            const type = typeof e.type === 'string' && /^[A-Za-z_]{1,32}$/.test(e.type) ? e.type : 'unknown';
+            const m = hits.magic[type] = hits.magic[type] || { casts: 0, amount: 0 };
+            m.casts += 1; m.amount += amount; c.magic += amount;
+          }
+        }
+      };
+
       const post = (type, data) => {
         try { window.webkit.messageHandlers[HANDLER].postMessage(JSON.stringify({ type, data: data || {} })); } catch (_) {}
       };
@@ -175,7 +208,12 @@ public enum CollectorScript {
         resume: (d) => ({ huntId: d.huntId, battleConfigs: BATTLE(d.battleConfigs), huntBestiary: counters(d.meta), state: state(d.state), analyzer: pick(d.analyzer, ANALYZER),
                           offline: pick(d.offline, OFFLINE), training: d.training === true }),
         hunt_started: (d) => ({ huntId: d.huntId, state: state(d.state), training: d.training === true }),
-        frame: (d) => ({ state: state(d.state), analyzer: pick(d.analyzer, ANALYZER), eventosProgresso: progress(d.eventosProgresso) }),
+        frame: (d) => {
+          tally(d);
+          const out = { state: state(d.state), analyzer: pick(d.analyzer, ANALYZER), eventosProgresso: progress(d.eventosProgresso), hits: hits || undefined };
+          hits = null;
+          return out;
+        },
         ended: (d) => ({ summary: pick(d.summary, SUMMARY) }),
         session_takeover: () => ({}),
         session_replaced: () => ({}),
@@ -187,12 +225,15 @@ public enum CollectorScript {
         // The server writes {"type":"...", ...}; skip unrelated messages without parsing them.
         const head = /^\{"type":"([a-z_]+)"/.exec(raw);
         if (head && !project[head[1]]) return;
-        if (head && head[1] === 'frame' && Date.now() - lastFrame < FRAME_INTERVAL_MS) return;
+        if (head && head[1] === 'frame' && Date.now() - lastFrame < FRAME_INTERVAL_MS) {
+          if (COMBAT.test(raw)) { try { const m = JSON.parse(raw); if (isObject(m) && isObject(m.data)) tally(m.data); } catch (_) {} }
+          return;
+        }
         let message;
         try { message = JSON.parse(raw); } catch (_) { return; }
         if (!isObject(message) || !project[message.type] || !isObject(message.data)) return;
         if (message.type === 'frame') {
-          if (Date.now() - lastFrame < FRAME_INTERVAL_MS) return;
+          if (Date.now() - lastFrame < FRAME_INTERVAL_MS) { tally(message.data); return; }
           lastFrame = Date.now();
         }
         post(message.type, project[message.type](message.data));

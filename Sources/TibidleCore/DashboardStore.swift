@@ -27,6 +27,7 @@ public final class DashboardStore {
     var runCache: [(account: Int, endedAt: Double, summary: [String: Any], id: Int)]?
     /// Average mana and health per party member during the current hunt (reset when a hunt starts or resumes).
     private var vitals: [Int: VitalsTracker] = [:]
+    private var hits: [Int: HitsTracker] = [:]
 
     public init(databaseURL: URL?, now: @escaping () -> Date = Date.init) {
         self.now = now
@@ -134,6 +135,7 @@ public final class DashboardStore {
             entry["huntStartedAt"] = date.timeIntervalSince1970 * 1000
             modeled[account] = ([:], 0, true, nil)
             vitals[account] = VitalsTracker()
+            hits[account] = HitsTracker()
             entry["bestiarySnap"] = 0.0
         case "resume", "frame":
             if type == "resume", let battle = data["battleConfigs"] { entry["battle"] = battle }
@@ -142,7 +144,8 @@ public final class DashboardStore {
                 entry["huntBestiary"] = counters
                 entry["bestiarySnap"] = number((data["analyzer"] as? [String: Any])?["killsTotal"]) ?? 0
             }
-            if type == "resume" { modeled[account] = nil; vitals[account] = VitalsTracker() }
+            if type == "resume" { modeled[account] = nil; vitals[account] = VitalsTracker(); hits[account] = HitsTracker() }
+            if let tally = data["hits"] as? [String: Any] { hits[account, default: HitsTracker()].add(tally, at: date) }
             if let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] { vitals[account, default: VitalsTracker()].add(party: party) }
             entry["status"] = "hunting"
             if let huntId = data["huntId"] { entry["huntId"] = huntId }
@@ -191,6 +194,7 @@ public final class DashboardStore {
                     return out
                 }
             }
+            if let measured = hits[account]?.summary() { summary["hits"] = measured }
             // The battle setup this hunt ran with, so two hunts can later be compared ("what changed?").
             let setup = presetVocations(entry).reduce(into: [String: Any]()) { $0[$1.vocation] = BattlePreset.normalize($1.config) }
             if !setup.isEmpty { summary["setup"] = setup }
@@ -291,6 +295,7 @@ public final class DashboardStore {
                 state["party"] = tracker.annotate(party: party)
                 out["state"] = state
             }
+            if entry["status"] as? String == "hunting", let measured = hits[index]?.summary() { out["hits"] = measured }
             out["battle"] = nil
             if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let bestiary = bestiaryProgress(entry) {
                 out["bestiary"] = bestiary
@@ -326,7 +331,7 @@ public final class DashboardStore {
             guard account["status"] as? String == "hunting" else { return account }
             let kills = ((account["analyzer"] as? [String: Any])?["kills"] as? [String: Any])?.compactMapValues { number($0) } ?? [:]
             let context = SkillAdvisor.Context(spells: spells, creatures: creatures, kills: kills, crowd: 1)
-            let combat = GearAdvisor.combat(analyzer: account["analyzer"] as? [String: Any])
+            let combat = GearAdvisor.combat(analyzer: account["analyzer"] as? [String: Any], hits: account["hits"] as? [String: Any])
             let gear = GearAdvisor.suggestions(for: index, members: members, combat: combat) { type in
                 let weighted = context.weighted(type)
                 return weighted.coverage > 0 ? weighted.multiplier : nil

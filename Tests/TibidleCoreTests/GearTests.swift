@@ -70,3 +70,38 @@ final class GearTests: XCTestCase {
         XCTAssertEqual(GearAdvisor.stopped(["armor": armor], shielding: 10, combat: melee), 15, accuracy: 0.001)
     }
 }
+
+final class HitsTests: XCTestCase {
+    func testMeasuredHitsSplitTheDamageForTheAdvisor() {
+        var tracker = HitsTracker()
+        let start = Date(timeIntervalSince1970: 1_000)
+        // Two minutes of 2 melee hits of 30 a second on the knight, and a fire spell of 60 every 2 seconds.
+        for step in 0..<40 {
+            tracker.add(["melee": ["hits": 6, "amount": 180, "max": 45],
+                         "magic": ["COMBAT_FIREDAMAGE": ["casts": 1, "amount": 90]],
+                         "creatures": ["Bog Raider": ["hits": 6, "melee": 180, "max": 45, "magic": 0],
+                                       "Swamp Troll": ["hits": 0, "melee": 0, "max": 0, "magic": 90]]],
+                        at: start.addingTimeInterval(Double(step + 1) * 3))
+        }
+        let summary = tracker.summary()!
+        XCTAssertEqual(summary["seconds"] as? Int, 120)
+        XCTAssertEqual(summary["hitsPerSecond"] as! Double, 2, accuracy: 0.001)
+        XCTAssertEqual(summary["meleeShare"] as! Double, 2.0 / 3, accuracy: 0.001)
+        XCTAssertEqual((summary["creatures"] as! [[String: Any]]).map { $0["name"] as? String }, ["Bog Raider", "Swamp Troll"])
+        XCTAssertEqual(summary["enough"] as? Bool, true)
+
+        let combat = GearAdvisor.combat(analyzer: ["elapsedMs": 600_000, "damageTaken": 54_000], hits: summary)!
+        XCTAssertEqual(combat.takenPerSecond, 90, accuracy: 0.001)
+        XCTAssertEqual(combat.physicalShare, 2.0 / 3, accuracy: 0.001)
+        XCTAssertEqual(combat.elements["fire"] ?? 0, 1, accuracy: 0.001)
+        // Fire protection now weighs all the magic part: 30/s, 10% of it stopped is 30 × 0.1 / 0.9.
+        let cape = GearAdvisor.Item(slot: "armor", name: "cape", stats: ["attrs.absorbpercentfire": 10])
+        XCTAssertEqual(GearAdvisor.stopped(["armor": cape], shielding: 10, combat: combat), 30 * 0.1 / 0.9, accuracy: 0.001)
+    }
+
+    func testTooShortToMeasure() {
+        var tracker = HitsTracker()
+        tracker.add(["melee": ["hits": 3, "amount": 90, "max": 40]], at: Date(timeIntervalSince1970: 0))
+        XCTAssertNil(tracker.summary())
+    }
+}

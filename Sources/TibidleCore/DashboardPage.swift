@@ -508,10 +508,23 @@ public enum DashboardPage {
       const advice = a.gearAdvice || [];
       const party = ((a.state || {}).party || []).filter((m) => m.gear && Object.keys(m.gear).length);
       const box = el('div');
-      if (advice.length) box.append(el('div', { class: 'mhead' }, 'Maiores melhorias'), el('ul', { class: 'advice' }, advice.map((g) => el('li', null, g.text))));
+      const hits = a.hits;
+      if (hits) {
+        // What the party takes, measured hit by hit: melee (only the knight) against spells, per element and per creature.
+        const pct = (v) => `${Math.round(num(v) * 100)}%`;
+        const elements = Object.entries(hits.elements || {}).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${ELEMENT[k] || k.toLowerCase()} ${pct(v)}`);
+        box.append(el('div', { class: 'mhead' }, `Dano recebido medido (${duration(num(hits.seconds) * 1000)})`),
+          el('div', { class: 'madvice' }, `Corpo a corpo ${pct(hits.meleeShare)} · ${num(hits.hitsPerSecond).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} golpes/s, ` +
+            `média ${fmt(Math.round(hits.meleeAverage))}, máx. ${fmt(hits.meleeMax)}`),
+          elements.length ? el('div', { class: 'madvice' }, `Magia ${pct(1 - num(hits.meleeShare))}: ${elements.join(' · ')}`) : null,
+          (hits.creatures || []).length ? el('div', { class: 'madvice' }, 'Quem mais machuca: ' + hits.creatures.map((c) =>
+            `${c.name} ${pct(c.share)}${c.meleeAverage ? ` (golpe ${fmt(Math.round(c.meleeAverage))}, máx. ${fmt(c.meleeMax)})` : ''}`).join(' · ')) : null);
+        if (!hits.enough) box.append(el('div', { class: 'sk-foot' }, 'Ainda poucos golpes medidos: as sugestões usam a divisão típica até lá.'));
+      }
+      if (advice.length) box.append(el('div', { class: 'mhead', style: hits ? { marginTop: '10px' } : null }, 'Maiores melhorias'), el('ul', { class: 'advice' }, advice.map((g) => el('li', null, g.text))));
       else box.append(el('div', { class: 'madvice' }, 'Nenhuma troca com ganho claro entre os itens que suas contas usam.'));
       // Price, weight and slot counts say nothing about how the item fights.
-      const NOISE = new Set(['value', 'weight', 'imbuementslot']);
+      const NOISE = new Set(['value', 'weight', 'imbuementslot', 'imbue.slots', 'forja.potenciaBase']);
       const SLOTS = ['head', 'armor', 'legs', 'boots', 'shield', 'weapon', 'necklace', 'ring'];
       const order = (slot) => (SLOTS.indexOf(slot) + 1) || 99;
       const statText = (st) => Object.entries(st || {}).map(([k, v]) => [k.replace(/^attrs\./, ''), v])

@@ -105,6 +105,30 @@ final class CollectorScriptTests: XCTestCase {
         XCTAssertEqual(posts().map { $0["type"] as? String }, ["frame", "frame", "_closed"])
     }
 
+    func testTalliesHitsTakenOnEveryFrameWithoutIds() {
+        let (context, posts) = makeContext()
+        context.evaluateScript("""
+            var ws = new WebSocket('wss://play.tibidle.com/ws');
+            var frame = (events) => JSON.stringify({ type: 'frame', data: { state: {}, analyzer: {}, events } });
+            ws.receive(frame([{ kind: 'spawn', id: 9123, name: 'Bog Raider' }, { kind: 'mhit', id: 9123, amount: 40 }]));
+            now += 1000;
+            ws.receive(frame([{ kind: 'mhit', id: 9123, amount: 60 }, { kind: 'mcast', id: 9123, atk: 'x', type: 'COMBAT_EARTHDAMAGE',
+              hits: [{ who: 0, amount: 25 }, { who: 2, amount: 15 }] }, { kind: 'mhit', id: 4444, amount: 10 }]));
+            now += 2500;
+            ws.receive(frame([]));
+            """)
+        let all = posts().map { $0["data"] as! [String: Any] }
+        XCTAssertEqual(all.count, 2)
+        XCTAssertEqual((all[0]["hits"] as? [String: Any])?["melee"] as? [String: Int], ["hits": 1, "amount": 40, "max": 40])
+        // The throttled frame's hits come with the next posted frame.
+        let hits = all[1]["hits"] as! [String: Any]
+        XCTAssertEqual(hits["melee"] as? [String: Int], ["hits": 2, "amount": 70, "max": 60])
+        XCTAssertEqual(hits["magic"] as? [String: [String: Int]], ["COMBAT_EARTHDAMAGE": ["casts": 1, "amount": 40]])
+        XCTAssertEqual(Set((hits["creatures"] as! [String: Any]).keys), ["Bog Raider", "?"])
+        let text = String(data: try! JSONSerialization.data(withJSONObject: all), encoding: .utf8)!
+        for forbidden in ["9123", "4444"] { XCTAssertFalse(text.contains(forbidden), "\(forbidden) leaked") }
+    }
+
     func testDoesNotTouchOutgoingMessagesOrOtherSites() {
         let (context, posts) = makeContext()
         context.evaluateScript("""

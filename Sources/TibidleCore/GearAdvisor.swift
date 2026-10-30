@@ -1,3 +1,5 @@
+import Foundation
+
 /// Equipment upgrades with the most impact, from the gear the collector reads:
 /// - defense of whoever takes the hits (the member with the lowest average health), slot by slot, against the
 ///   best item your other accounts use on the same vocation, scored as damage taken less per second by the
@@ -123,11 +125,24 @@ public enum GearAdvisor {
         }
     }
 
-    /// The party's damage taken per second in the hunt so far; a few minutes are needed for a rate.
-    static func combat(analyzer: [String: Any]?) -> Combat? {
+    /// The party's damage taken per second in the hunt so far (a few minutes are needed for a rate), split into
+    /// melee hits and spells per element when the hits were measured (`HitsTracker.summary()`).
+    static func combat(analyzer: [String: Any]?, hits: [String: Any]? = nil) -> Combat? {
         guard let analyzer, let elapsed = HuntInsights.number(analyzer["elapsedMs"]), elapsed >= 5 * 60_000,
               let taken = HuntInsights.number(analyzer["damageTaken"]), taken > 0 else { return nil }
-        return Combat(takenPerSecond: taken / (elapsed / 1000))
+        var combat = Combat(takenPerSecond: taken / (elapsed / 1000))
+        guard let hits, hits["enough"] as? Bool == true, let share = HuntInsights.number(hits["meleeShare"]) else { return combat }
+        combat.physicalShare = share
+        combat.hitsPerSecond = HuntInsights.number(hits["hitsPerSecond"]) ?? combat.hitsPerSecond
+        // Shares of all the damage, made shares of the magic part, keyed like the protections ("fire", "ice"…).
+        let magic = max(1e-9, 1 - share)
+        var elements: [String: Double] = [:]
+        for (type, value) in (hits["elements"] as? [String: Any]) ?? [:] {
+            let key = type.lowercased().replacingOccurrences(of: "combat_", with: "").replacingOccurrences(of: "damage", with: "")
+            elements[key, default: 0] += (HuntInsights.number(value) ?? 0) / magic
+        }
+        combat.elements = elements
+        return combat
     }
 
     static func shielding(_ member: [String: Any]) -> Double {
@@ -203,4 +218,63 @@ public enum GearAdvisor {
     }
 
     static func percent(_ share: Double) -> String { "\(Int((share * 100).rounded()))%" }
+}
+
+/// The hits the party takes in the hunt in progress, from the collector's tally of creature melee (`mhit`)
+/// and creature spells (`mcast`) between posted frames.
+public struct HitsTracker {
+    struct Creature { var hits = 0.0, melee = 0.0, max = 0.0, magic = 0.0 }
+    private var first: Date?
+    private var last: Date?
+    private var meleeHits = 0.0, melee = 0.0, meleeMax = 0.0
+    private var magic: [String: Double] = [:]
+    private var creatures: [String: Creature] = [:]
+
+    /// A rate needs this long and this many hits.
+    static let minSeconds = 120.0
+    static let minHits = 20.0
+
+    public init() {}
+
+    public mutating func add(_ tally: [String: Any], at date: Date) {
+        first = first ?? date.addingTimeInterval(-3)
+        last = date
+        if let m = tally["melee"] as? [String: Any] {
+            meleeHits += HuntInsights.number(m["hits"]) ?? 0
+            melee += HuntInsights.number(m["amount"]) ?? 0
+            meleeMax = max(meleeMax, HuntInsights.number(m["max"]) ?? 0)
+        }
+        for case let (type, value as [String: Any]) in (tally["magic"] as? [String: Any]) ?? [:] {
+            magic[type, default: 0] += HuntInsights.number(value["amount"]) ?? 0
+        }
+        for case let (name, value as [String: Any]) in (tally["creatures"] as? [String: Any]) ?? [:] {
+            var c = creatures[name] ?? Creature()
+            c.hits += HuntInsights.number(value["hits"]) ?? 0
+            c.melee += HuntInsights.number(value["melee"]) ?? 0
+            c.max = max(c.max, HuntInsights.number(value["max"]) ?? 0)
+            c.magic += HuntInsights.number(value["magic"]) ?? 0
+            creatures[name] = c
+        }
+    }
+
+    /// What was measured, for the page and the hunt summary: melee and magic per second, per element, and the
+    /// creatures that hurt the most.
+    public func summary() -> [String: Any]? {
+        guard let first, let last else { return nil }
+        let seconds = last.timeIntervalSince(first)
+        let total = melee + magic.values.reduce(0, +)
+        guard seconds >= Self.minSeconds, total > 0 else { return nil }
+        let top = creatures.sorted { $0.value.melee + $0.value.magic > $1.value.melee + $1.value.magic }.prefix(5)
+        return [
+            "seconds": Int(seconds.rounded()), "meleeShare": melee / total,
+            "meleePerSecond": melee / seconds, "magicPerSecond": (total - melee) / seconds,
+            "hitsPerSecond": meleeHits / seconds, "meleeAverage": meleeHits > 0 ? melee / meleeHits : 0, "meleeMax": meleeMax,
+            "elements": magic.filter { $0.value > 0 }.mapValues { $0 / total },
+            "creatures": top.map { name, c -> [String: Any] in
+                ["name": name, "share": (c.melee + c.magic) / total, "meleeAverage": c.hits > 0 ? c.melee / c.hits : 0,
+                 "meleeMax": c.max, "magicShare": c.melee + c.magic > 0 ? c.magic / (c.melee + c.magic) : 0]
+            },
+            "enough": meleeHits >= Self.minHits,
+        ]
+    }
 }
