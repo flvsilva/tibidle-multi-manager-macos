@@ -76,6 +76,8 @@ public enum GearAdvisor {
         /// Shielding skill; the melee skill stands in before the collector reads it.
         let shielding: Double
         let items: [String: Item]
+        /// Place in the party: how the game names who a spell landed on (0 is the knight).
+        var position = 0
     }
 
     /// What hits the tank, per second. Until the hits are read one by one, the party's damage taken with
@@ -116,7 +118,7 @@ public enum GearAdvisor {
     static func members(accounts: [[String: Any]]) -> [Member] {
         accounts.flatMap { account -> [Member] in
             let party = ((account["state"] as? [String: Any])?["party"] as? [[String: Any]]) ?? []
-            return party.compactMap { member in
+            return party.enumerated().compactMap { position, member in
                 guard let vocation = member["vocation"] as? String, let gear = member["gear"] as? [String: Any], !gear.isEmpty else { return nil }
                 var items: [String: Item] = [:]
                 for (slot, value) in gear {
@@ -125,7 +127,7 @@ public enum GearAdvisor {
                 }
                 return Member(account: account["index"] as? Int ?? 0, label: account["label"] as? String ?? "",
                               vocation: SkillAdvisor.baseVocation(vocation).uppercased(), level: Int(HuntInsights.number(member["level"]) ?? 1),
-                              hpAverage: member["hpAverage"] as? Double, shielding: shielding(member), items: items)
+                              hpAverage: member["hpAverage"] as? Double, shielding: shielding(member), items: items, position: position)
             }
         }
     }
@@ -142,15 +144,39 @@ public enum GearAdvisor {
         // Shares of all the damage, made shares of the magic part, keyed like the protections ("fire", "ice"…).
         // Conditions hurt as their element; physical spells and bleeding only meet physical protection;
         // life drain and anything else no item protects against.
-        let magic = max(1e-9, 1 - share)
+        combat.elements = protections(hits["elements"] as? [String: Any] ?? [:], scale: max(1e-9, 1 - share))
+        return combat
+    }
+
+    /// What hits each party position, once the hits are measured per member: the knight (position 0) takes
+    /// all the melee, everyone takes their own spells.
+    static func combats(hits: [String: Any]?) -> [Int: Combat] {
+        guard let hits, hits["enough"] as? Bool == true, let members = hits["members"] as? [[String: Any]], !members.isEmpty else { return [:] }
+        let meleePerSecond = HuntInsights.number(hits["meleePerSecond"]) ?? 0
+        var out: [Int: Combat] = [:]
+        for member in members {
+            guard let position = HuntInsights.number(member["position"]).map(Int.init) else { continue }
+            let magic = HuntInsights.number(member["magicPerSecond"]) ?? 0
+            let melee = position == 0 ? meleePerSecond : 0
+            guard melee + magic > 0 else { continue }
+            var combat = Combat(takenPerSecond: melee + magic, hitsPerSecond: position == 0 ? HuntInsights.number(hits["hitsPerSecond"]) ?? 0 : 0,
+                                physicalShare: melee / (melee + magic))
+            combat.elements = protections(member["elements"] as? [String: Any] ?? [:], scale: 1)
+            out[position] = combat
+        }
+        return out
+    }
+
+    /// Damage types (`COMBAT_FIREDAMAGE`, `CONDITION_POISON`…) keyed like the protections ("fire", "physical"…),
+    /// each share divided by `scale`; life drain and anything else no item protects against is left out.
+    static func protections(_ types: [String: Any], scale: Double) -> [String: Double] {
         var elements: [String: Double] = [:]
-        for (type, value) in (hits["elements"] as? [String: Any]) ?? [:] {
+        for (type, value) in types {
             guard let key = protectedBy[type] ?? Optional(type.lowercased().replacingOccurrences(of: "combat_", with: "")
                 .replacingOccurrences(of: "damage", with: "")), key == "physical" || elementNames.contains(key) else { continue }
-            elements[key, default: 0] += (HuntInsights.number(value) ?? 0) / magic
+            elements[key, default: 0] += (HuntInsights.number(value) ?? 0) / scale
         }
-        combat.elements = elements
-        return combat
+        return elements
     }
 
     static func shielding(_ member: [String: Any]) -> Double {
@@ -159,14 +185,20 @@ public enum GearAdvisor {
     }
 
     /// - Parameter multiplier: damage share a combat type does to the monsters of this account's hunt (nil if unknown).
-    static func suggestions(for account: Int, members all: [Member], combat: Combat?, multiplier: (String) -> Double?) -> [[String: Any]] {
+    /// - Parameter perMember: what hits each party position, when measured (`combats(hits:)`): then every member's
+    ///   gear is weighed against its own hits; otherwise only the one who takes the hits, against the party's.
+    static func suggestions(for account: Int, members all: [Member], combat: Combat?, perMember: [Int: Combat] = [:],
+                            multiplier: (String) -> Double?) -> [[String: Any]] {
         let mine = all.filter { $0.account == account }
         guard !mine.isEmpty else { return [] }
         // Who takes the hits: lowest average health; before there are enough frames, the knight.
         let tank = mine.filter { $0.hpAverage != nil }.min { $0.hpAverage! < $1.hpAverage! }
             ?? mine.first { $0.vocation == "KNIGHT" }
+        let targets: [(Member, Combat, String)] = perMember.isEmpty
+            ? [tank.flatMap { tank in combat.map { (tank, $0, "do recebido") } }].compactMap { $0 }
+            : mine.compactMap { member in perMember[member.position].map { (member, $0, "do que recebe") } }
         var out: [(score: Double, text: [String: Any])] = []
-        if let tank, let combat, combat.takenPerSecond > 0 {
+        for (tank, combat, of) in targets where combat.takenPerSecond > 0 {
             let peers = all.filter { $0.vocation == tank.vocation && $0.account != account }
             let now = stopped(tank.items, shielding: tank.shielding, combat: combat)
             for slot in defensiveSlots {
@@ -187,7 +219,7 @@ public enum GearAdvisor {
                     "from": current?.summary ?? "vazio", "to": best.1.summary, "source": best.0.label,
                     "text": "\(BattlePreset.vocationLabel(tank.vocation)) · \(slotNames[slot] ?? slot): " +
                         "\(current?.summary ?? "vazio") → \(best.1.summary) (usado em \(best.0.label)): " +
-                        "~\(Int(best.2.rounded())) de dano a menos por segundo (\(percent(share)) do recebido)",
+                        "~\(Int(best.2.rounded())) de dano a menos por segundo (\(percent(share)) \(of))",
                 ]))
             }
         }
@@ -199,7 +231,8 @@ public enum GearAdvisor {
                     return (peer, item, m)
                 }.max { $0.2 < $1.2 }
             let from = "\(weapon.name) (\(Attention.elements[element] ?? element), \(percent(share)) do dano)"
-            var row: [String: Any] = ["kind": "element", "vocation": member.vocation, "slot": "arma", "from": from]
+            var row: [String: Any] = ["kind": "element", "vocation": member.vocation, "slot": "arma", "from": from,
+                                      "weapon": weapon.name, "damageShare": share]
             var text = "\(BattlePreset.vocationLabel(member.vocation)) · arma: \(from)"
             if let better {
                 let to = "\(better.1.name) (\(Attention.elements[better.1.element ?? ""] ?? ""), \(percent(better.2)))"
@@ -237,16 +270,31 @@ public struct HitsTracker {
     private var meleeHits = 0.0, melee = 0.0, meleeMax = 0.0
     private var magic: [String: Double] = [:]
     private var creatures: [String: Creature] = [:]
+    /// Spell damage per party position (0 is the knight) and element.
+    private var members: [Int: [String: Double]] = [:]
+    /// The last minute of tallies, and what it held when someone died.
+    private var recent: [(date: Date, tally: [String: Any])] = []
+    private(set) var lastDeath: [String: Any]?
 
     /// A rate needs this long and this many hits.
     static let minSeconds = 120.0
     static let minHits = 20.0
+    static let deathWindow = 60.0
 
     public init() {}
 
     public mutating func add(_ tally: [String: Any], at date: Date) {
         first = first ?? date.addingTimeInterval(-3)
         last = date
+        recent.append((date, tally))
+        recent.removeAll { date.timeIntervalSince($0.date) > Self.deathWindow }
+        for case let (key, value as [String: Any]) in (tally["members"] as? [String: Any]) ?? [:] {
+            guard let position = Int(key) else { continue }
+            for (type, amount) in value { members[position, default: [:]][type, default: 0] += HuntInsights.number(amount) ?? 0 }
+        }
+        if let deaths = tally["deaths"] as? [Any], !deaths.isEmpty {
+            lastDeath = Self.window(recent, dead: deaths.compactMap { HuntInsights.number($0).map(Int.init) })
+        }
         if let m = tally["melee"] as? [String: Any] {
             meleeHits += HuntInsights.number(m["hits"]) ?? 0
             melee += HuntInsights.number(m["amount"]) ?? 0
@@ -283,6 +331,45 @@ public struct HitsTracker {
                  "meleeMax": c.max, "magicShare": c.melee + c.magic > 0 ? c.magic / (c.melee + c.magic) : 0]
             },
             "enough": meleeHits >= Self.minHits,
+            "members": members.sorted { $0.key < $1.key }.map { position, types -> [String: Any] in
+                let amount = types.values.reduce(0, +)
+                return ["position": position, "magicPerSecond": amount / seconds,
+                        "elements": amount > 0 ? types.filter { $0.value > 0 }.mapValues { $0 / amount } : [:]]
+            },
+        ]
+    }
+
+    /// What hit the party in the tallies before a death: the creatures by damage, the elements, the knight's
+    /// melee and each position's spell damage, and who died.
+    static func window(_ tallies: [(date: Date, tally: [String: Any])], dead: [Int]) -> [String: Any] {
+        var creatures: [String: (melee: Double, magic: Double, max: Double)] = [:]
+        var elements: [String: Double] = [:], members: [Int: Double] = [:]
+        var melee = 0.0
+        for (_, tally) in tallies {
+            melee += HuntInsights.number((tally["melee"] as? [String: Any])?["amount"]) ?? 0
+            for case let (type, value as [String: Any]) in (tally["magic"] as? [String: Any]) ?? [:] {
+                elements[type, default: 0] += HuntInsights.number(value["amount"]) ?? 0
+            }
+            for case let (name, value as [String: Any]) in (tally["creatures"] as? [String: Any]) ?? [:] {
+                var c = creatures[name] ?? (0, 0, 0)
+                c.melee += HuntInsights.number(value["melee"]) ?? 0
+                c.magic += HuntInsights.number(value["magic"]) ?? 0
+                c.max = max(c.max, HuntInsights.number(value["max"]) ?? 0)
+                creatures[name] = c
+            }
+            for case let (key, value as [String: Any]) in (tally["members"] as? [String: Any]) ?? [:] {
+                guard let position = Int(key) else { continue }
+                members[position, default: 0] += value.values.reduce(0) { $0 + (HuntInsights.number($1) ?? 0) }
+            }
+        }
+        let seconds = tallies.count > 1 ? tallies.last!.date.timeIntervalSince(tallies.first!.date) + 3 : 3
+        return [
+            "seconds": Int(seconds.rounded()), "dead": dead, "melee": Int(melee.rounded()),
+            "creatures": creatures.sorted { $0.value.melee + $0.value.magic > $1.value.melee + $1.value.magic }.prefix(4).map {
+                ["name": $0.key, "melee": Int($0.value.melee.rounded()), "magic": Int($0.value.magic.rounded()), "meleeMax": Int($0.value.max.rounded())]
+            },
+            "elements": elements.filter { $0.value > 0 }.mapValues { Int($0.rounded()) },
+            "members": Dictionary(uniqueKeysWithValues: members.map { (String($0.key), Int($0.value.rounded())) }),
         ]
     }
 }

@@ -31,6 +31,19 @@ final class RiskTests: XCTestCase {
     }
 }
 
+final class WeaponTests: XCTestCase {
+    func testWarnsAboutAWandOrRodOfAResistedElement() {
+        let entry: [String: Any] = ["index": 1, "label": "Zolp", "status": "hunting", "gearAdvice": [
+            ["kind": "element", "vocation": "DRUID", "weapon": "springsprout rod", "damageShare": 0.0, "to": "glacial rod (gelo, 100%)", "source": "showshow"],
+            ["kind": "element", "vocation": "SORCERER", "weapon": "wand of inferno", "damageShare": 0.65, "to": "wand of destruction (energia, 84%)"],
+            ["kind": "defense", "vocation": "KNIGHT", "text": "…"],
+        ]]
+        let items = Attention.evaluate(accounts: [entry], now: 0).filter { $0.kind == "weapon" }
+        XCTAssertEqual(items.map(\.text), ["Zolp: Druid com springsprout rod causa só 0% do dano nos monstros desta hunt — " +
+                                           "troque por glacial rod (gelo, 100%) (usada em showshow)."])
+    }
+}
+
 final class UpdateTests: XCTestCase {
     func testComparesVersions() {
         XCTAssertTrue(UpdateChecker.isNewer("1.0.1", than: "1.0.0"))

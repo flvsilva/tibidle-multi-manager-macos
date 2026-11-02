@@ -39,10 +39,10 @@ Abra em **Dashboard → Abrir dashboard** ou, de outro aparelho na mesma rede (c
 - **Precisa de atenção**, agrupado por conta:
   - missão pronta para resgatar, sequência semanal em risco, recompensa do calendário de login;
   - mochila ou bolsa de chaves cheia (chaves que caem com a bolsa cheia se perdem);
-  - hunt que terminou por morte, sem gold ou com cap cheio; conta parada na cidade; sessão aberta em outro lugar;
+  - hunt que terminou por morte (com quem mais machucou no último minuto), sem gold ou com cap cheio; conta parada na cidade; sessão aberta em outro lugar;
   - invasão com inscrição aberta sem você ter entrado, ou começando em até 15 min;
   - lucro 20% abaixo da sua melhor hunt recente no mapa, com o setup mudado;
-  - skill de um elemento que os monstros resistem (menos de 50% do dano) que ainda dispara, e membro com menos de 10% de mana em média;
+  - skill, wand ou rod de um elemento que os monstros resistem (menos de 50% do dano), com a arma que rende mais; membro com menos de 10% de mana em média;
   - **hunt arriscada:** alguém chegou a menos de 30% da vida, ou um golpe corpo a corpo leva 35% ou mais da vida do knight, com a criatura que mais machuca.
 
 ### Cartão de cada conta
@@ -52,7 +52,7 @@ Status (caçando, na cidade, desconectada), XP/h, lucro/h, tempo, kills/h, balan
 ### Painel da conta
 
 - **Hunt:** a melhor hunt recente da conta nesse mapa (lucro/h de lá e de agora, o que mudou no setup de batalha, supplies por membro, botão para ver o setup completo e salvar como preset); o histórico das contas nesse mapa no nível atual ±2, para separar "é o nível" de "é o setup"; o bestiário do mapa com os marcos e o tempo até cada um; kills e drops.
-- **Nível:** XP que falta, tempo no ritmo atual e, nas hunts feitas perto desse nível, XP/h, lucro/h e o gold ganho ou gasto até subir.
+- **Nível:** XP que falta, tempo no ritmo atual e, nas hunts da conta perto desse nível, XP/h, lucro/h e o gold ganho ou gasto até subir; e **onde suas contas caçaram** no nível ±5 (qualquer conta, últimos 60 dias): XP/h, lucro/h e dano recebido/h por mapa, para as contas de trás seguirem as da frente.
 - **Skills:** dano estimado de cada skill contra os monstros da hunt, avisos de elemento resistido e sugestões de troca com o ganho e o custo de mana (veja [Análise de skills](#análise-de-skills)).
 - **Equipamento:** o dano recebido medido golpe a golpe, as melhorias de equipamento e o equipamento completo da party (veja [Conselheiro de equipamento](#conselheiro-de-equipamento)).
 - **Missões:** as missões diárias, a previsão de quando cada uma conclui, se a hunt atual conta e a hunt sugerida; a sequência e as metas semanais.
@@ -61,8 +61,9 @@ Status (caçando, na cidade, desconectada), XP/h, lucro/h, tempo, kills/h, balan
 
 - **Mesma hunt, lado a lado:** quando duas ou mais contas caçam no mesmo mapa, compara lucro, loot, supplies, XP, kills, dano causado e recebido, cura e as razões por kill e por XP; fica em vermelho o que está 20% ou mais pior que a melhor conta.
 - **Ranking de hunts** por mapa: XP/h, lucro/h, kills/h, dano recebido/h, supplies/h e mortes, por conta ou todas, ordenado por lucro, XP, kills, menos dano ou menos supplies. Nas hunts com golpes medidos, a dica da coluna de dano mostra quanto foi dreno de vida.
+- **Esta semana:** XP, lucro, tempo caçado, níveis, hunts e mortes de cada conta nos últimos 7 dias, com a variação em relação aos 7 anteriores.
 - **Gráficos:** XP/h e lucro/h nas últimas 1 h a 7 dias, e lucro por nível em cada mapa (um ponto por hunt), com tabela.
-- **Totais por dia** e **hunts encerradas** (duração, motivo, level, XP, loot, supplies, mortes). Clicar numa hunt mostra os detalhes e o setup de batalha com que ela rodou, comparado a outra hunt.
+- **Totais por dia** e **hunts encerradas** (duração, motivo, level, XP, loot, supplies, mortes). Clicar numa hunt mostra os detalhes, o setup de batalha com que ela rodou (comparado a outra hunt) e, se alguém morreu, **o último minuto antes da morte**: quem morreu, as criaturas que mais bateram, os elementos e quanto cada membro recebeu.
 - **CSV** do histórico de hunts e das amostras por minuto.
 
 ### Análise de skills
@@ -73,9 +74,9 @@ O dano é uma **estimativa**, porque o app não conhece as regras internas do se
 
 ### Conselheiro de equipamento
 
-**Dano recebido medido.** Golpe a golpe, quanto do dano é corpo a corpo (golpes por segundo, média e máximo), quanto é magia de cada elemento (inclusive veneno, queimadura, sangramento e dreno de vida) e quais criaturas mais machucam. A medição vai também para o resumo de cada hunt.
+**Dano recebido medido.** Golpe a golpe, quanto do dano é corpo a corpo (golpes por segundo, média e máximo), quanto é magia de cada elemento (inclusive veneno, queimadura, sangramento e dreno de vida), em quem a magia cai e quais criaturas mais machucam. A medição vai também para o resumo de cada hunt.
 
-**Melhorias.** Para quem mais apanha (menor HP média; antes disso, o knight), cada slot de defesa é comparado com o melhor item que suas outras contas usam na mesma vocação (no jogo, item só exige vocação). O ganho é dado em **dano a menos por segundo**, pelas regras de combate da wiki:
+**Melhorias.** Com o dano medido por membro, cada membro da party é avaliado contra o que ele recebe (o corpo a corpo cai só no knight; a magia, em quem ela atingiu); antes disso, só quem mais apanha (menor HP média, ou o knight) contra o dano da party. Cada slot de defesa é comparado com o melhor item que suas outras contas usam na mesma vocação (no jogo, item só exige vocação). O ganho é dado em **dano a menos por segundo**, pelas regras de combate da wiki:
 
 - armadura tira em média 0,75 por ponto de cada golpe corpo a corpo;
 - o escudo bloqueia 0,06 × (Escudo/4 + 2,23) × defesa, até 1 golpe por segundo;
@@ -107,7 +108,7 @@ Um script somente leitura (`Sources/TibidleCore/CollectorScript.swift`) roda ape
 - números da hunt (XP, loot, supplies, kills, dano, cura) e o status da party (vida, mana, level, skills com o bônus);
 - as missões diárias, a sequência e as metas semanais (só progresso) e o horário da invasão do dia;
 - do equipamento, por slot, o nome e os números do item e os nomes dos campos, nunca ids;
-- dos golpes que a party recebe (eventos `mhit` e `mcast`), só a soma por criatura (pelo nome) e por elemento, nunca os ids das criaturas.
+- dos golpes que a party recebe (eventos `mhit`, `mcast` e `death`), só a soma por criatura (pelo nome), por elemento e por posição na party (0 a 7), nunca ids de criaturas ou personagens.
 
 O resto, inclusive o token de sessão, é descartado. Os testes em `Tests/TibidleCoreTests/DashboardTests.swift` executam esse script e verificam isso.
 

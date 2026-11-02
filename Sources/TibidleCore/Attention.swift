@@ -83,12 +83,19 @@ public enum Attention {
             }
             if status == "hunting" { items += skillItems(entry, account: i, label: label) }
             if status == "hunting", let risk = riskItem(entry, account: i, label: label) { items.append(risk) }
+            if status == "hunting" { items += weaponItems(entry, account: i, label: label) }
             if status != "hunting", let summary = entry["lastSummary"] as? [String: Any],
                let reason = summary["reason"] as? String, let (level, what) = badReasons[reason] {
                 let endedAt = number(summary["endedAt"])
                 if now - endedAt <= endedWindow {
+                    // After a death, what hit hardest in the minute before it (details in the finished hunt).
+                    var cause = ""
+                    if let death = summary["deathHits"] as? [String: Any], let top = (death["creatures"] as? [[String: Any]])?.first,
+                       let name = top["name"] as? String, name != "?" {
+                        cause = " No último minuto, quem mais machucou foi \(name) (\(Int(number(top["melee"]) + number(top["magic"]))) de dano)."
+                    }
                     items.append(AttentionItem(key: "ended|\(i)|\(Int(endedAt))", account: i, kind: "ended", level: level,
-                                               text: "\(label): a hunt \(what) e a conta está parada.", notify: level != "info"))
+                                               text: "\(label): a hunt \(what) e a conta está parada.\(cause)", notify: level != "info"))
                 }
             }
             if status == "city", now - number(entry["statusSince"]) >= idleAfter, number(entry["statusSince"]) > 0 {
@@ -126,6 +133,19 @@ public enum Attention {
         }
         return AttentionItem(key: "risk|\(i)|\(hunt)|\(level)", account: i, kind: "risk", level: level,
                              text: "\(label): \(parts.joined(separator: "; ")).", notify: level == "bad")
+    }
+
+    /// A sorcerer's wand or druid's rod of an element the hunt's monsters resist (from the gear advice).
+    static func weaponItems(_ entry: [String: Any], account i: Int, label: String) -> [AttentionItem] {
+        (entry["gearAdvice"] as? [[String: Any]] ?? []).compactMap { row in
+            guard row["kind"] as? String == "element", let share = row["damageShare"] as? Double, share < weakElement,
+                  let weapon = row["weapon"] as? String else { return nil }
+            let vocation = vocationName(row["vocation"])
+            let swap = (row["to"] as? String).map { " — troque por \($0)\(row["source"].map { " (usada em \($0))" } ?? "")" } ?? " — troque por uma de outro elemento"
+            return AttentionItem(key: "weapon|\(i)|\(vocation)|\(weapon)", account: i, kind: "weapon", level: "warn",
+                                 text: "\(label): \(vocation) com \(weapon) causa só \(Int((share * 100).rounded()))% do dano nos monstros desta hunt\(swap).",
+                                 notify: false)
+        }
     }
 
     private static func vocationName(_ vocation: Any?) -> String {

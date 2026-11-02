@@ -93,6 +93,7 @@ public enum DashboardPage {
     .summary b { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
     .update { font-size: 12px; color: var(--s0); text-decoration: none; border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
     .update:hover { text-decoration: underline; }
+    .death { margin-top: 8px; padding: 6px 10px; border-left: 3px solid var(--critical); background: var(--surface-2, var(--surface)); font-size: 13px; }
     .attention { margin-bottom: 14px; display: grid; gap: 6px; }
     .attention .item { display: flex; gap: 8px; align-items: baseline; background: var(--surface); border: 1px solid var(--border);
       border-left: 4px solid var(--axis); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
@@ -270,6 +271,8 @@ public enum DashboardPage {
       </section>
 
       <section class="section">
+        <div class="toolbar"><h2>Esta semana</h2><span class="muted-text" style="font-size:12px">últimos 7 dias, comparados aos 7 anteriores</span></div>
+        <div class="table-wrap" id="weekly"></div>
         <div class="toolbar"><h2>Totais por dia</h2></div>
         <div class="table-wrap" id="daily"></div>
       </section>
@@ -467,6 +470,20 @@ public enum DashboardPage {
       return box;
     }
 
+    // Maps any account hunted near this level: the accounts ahead show where the ones behind can go.
+    function whereToHunt(a) {
+      const w = a.whereToHunt;
+      if (!w) return null;
+      return el('div', { class: 'bestiary' }, el('div', { class: 'mhead' }, `Onde suas contas caçaram no nível ${w.level} (±${w.range})`),
+        el('div', { class: 'table-wrap' }, el('table', { class: 'mini' },
+          el('thead', null, el('tr', null, el('th', null, 'Hunt'), ['XP/h', 'Lucro/h', 'Recebido/h', 'Horas'].map((h) => el('th', { class: 'n' }, h)))),
+          el('tbody', null, w.rows.map((r) => el('tr', { title: `${r.accounts.join(', ')}${r.deaths ? ` · ${r.deaths} morte(s)` : ''}` },
+            el('td', { style: { whiteSpace: 'normal' } }, r.title, r.current ? ' (atual)' : '', el('div', { class: 'muted-text', style: { fontSize: '11px' } }, r.accounts.join(', '))),
+            el('td', { class: 'n' }, kk(r.xpPerHour)), el('td', { class: 'n ' + (r.profitPerHour >= 0 ? 'pos' : 'neg') }, kkSigned(r.profitPerHour)),
+            el('td', { class: 'n' }, kk(r.damageTakenPerHour)), el('td', { class: 'n' }, r.hours.toLocaleString('pt-BR'))))))),
+        el('div', { class: 'sk-foot', style: { marginTop: '4px' } }, 'Hunts de 30 min ou mais de qualquer conta nos últimos 60 dias, no mínimo 1 h por mapa. A party de cada conta é diferente: use como ponto de partida.'));
+    }
+
     // The card shows the essentials; the detail behind each topic opens in a per-account panel, one tab per topic.
     let openPanel = null;
     const TABS = [['hunt', 'Hunt'], ['level', 'Nível'], ['skills', 'Skills'], ['gear', 'Equipamento'], ['daily', 'Missões']];
@@ -510,6 +527,26 @@ public enum DashboardPage {
       const list = topKills((a.analyzer || {}).drops, 12).filter(([n]) => n.toLowerCase() !== 'gold coin').slice(0, 8);
       return list.length ? el('div', { class: 'monsters' }, 'Drops: ' + list.map(([m, k]) => `${m} ×${fmt(k)}`).join(' · ')) : null;
     }
+    // Who the spells land on (party position → member), as a share of all the spell damage.
+    function perMember(a, hits) {
+      const party = (a.state || {}).party || [], list = (hits.members || []).filter((m) => num(m.magicPerSecond) > 0);
+      const total = list.reduce((sum, m) => sum + num(m.magicPerSecond), 0);
+      if (!total) return null;
+      return el('div', { class: 'madvice' }, 'Magia em quem: ' + list.slice().sort((x, y) => num(y.magicPerSecond) - num(x.magicPerSecond))
+        .map((m) => `${vocation((party[m.position] || {}).vocation) || `membro ${m.position + 1}`} ${Math.round(100 * num(m.magicPerSecond) / total)}%`).join(' · '));
+    }
+    // The minute before a death: who died, what hit, and who took it.
+    function deathBody(d) {
+      if (!d) return null;
+      const creatures = (d.creatures || []).map((c) => `${c.name} ${fmt(num(c.melee) + num(c.magic))}` +
+        (num(c.melee) && num(c.magic) ? ` (${fmt(c.melee)} corpo a corpo)` : num(c.melee) ? ` corpo a corpo, máx. ${fmt(c.meleeMax)}` : ' em magia'));
+      const elements = Object.entries(d.elements || {}).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([k, v]) => `${ELEMENT[k] || k.toLowerCase()} ${fmt(v)}`);
+      const taken = Object.entries(d.members || {}).sort((x, y) => y[1] - x[1]).map(([v, n]) => `${vocation(v)} ${fmt(n)}`);
+      if (num(d.melee)) taken.unshift(`corpo a corpo no knight ${fmt(d.melee)}`);
+      const who = (d.dead || []).map(vocation).join(', ');
+      return el('div', { class: 'death' }, el('b', null, `Último ${d.seconds >= 50 ? 'minuto' : `${d.seconds}s`} antes da morte${who ? ` (${who})` : ''}: `),
+        [creatures.join(' · ') || 'nenhum golpe medido', elements.length ? ` — magia: ${elements.join(' · ')}` : '', taken.length ? ` — recebido: ${taken.join(' · ')}` : ''].join(''));
+    }
     function gearBody(a) {
       const advice = a.gearAdvice || [];
       const party = ((a.state || {}).party || []).filter((m) => m.gear && Object.keys(m.gear).length);
@@ -519,12 +556,14 @@ public enum DashboardPage {
         // What the party takes, measured hit by hit: melee (only the knight) against spells, per element and per creature.
         const pct = (v) => `${Math.round(num(v) * 100)}%`;
         const elements = Object.entries(hits.elements || {}).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${ELEMENT[k] || k.toLowerCase()} ${pct(v)}`);
-        box.append(el('div', { class: 'mhead' }, `Dano recebido medido (${duration(num(hits.seconds) * 1000)})`),
+        // DOM append writes null as text: the optional lines are filtered out.
+        box.append(...[el('div', { class: 'mhead' }, `Dano recebido medido (${duration(num(hits.seconds) * 1000)})`),
           el('div', { class: 'madvice' }, `Corpo a corpo ${pct(hits.meleeShare)} · ${num(hits.hitsPerSecond).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} golpes/s, ` +
             `média ${fmt(Math.round(hits.meleeAverage))}, máx. ${fmt(hits.meleeMax)}`),
           elements.length ? el('div', { class: 'madvice' }, `Magia ${pct(1 - num(hits.meleeShare))}: ${elements.join(' · ')}`) : null,
+          perMember(a, hits),
           (hits.creatures || []).length ? el('div', { class: 'madvice' }, 'Quem mais machuca: ' + hits.creatures.map((c) =>
-            `${c.name} ${pct(c.share)}${c.meleeAverage ? ` (golpe ${fmt(Math.round(c.meleeAverage))}, máx. ${fmt(c.meleeMax)})` : ''}`).join(' · ')) : null);
+            `${c.name} ${pct(c.share)}${c.meleeAverage ? ` (golpe ${fmt(Math.round(c.meleeAverage))}, máx. ${fmt(c.meleeMax)})` : ''}`).join(' · ')) : null].filter(Boolean));
         if (!hits.enough) box.append(el('div', { class: 'sk-foot' }, 'Ainda poucos golpes medidos: as sugestões usam a divisão típica até lá.'));
       }
       if (advice.length) box.append(el('div', { class: 'mhead', style: hits ? { marginTop: '10px' } : null }, 'Maiores melhorias'), el('ul', { class: 'advice' }, advice.map((g) => el('li', null, g.text))));
@@ -549,7 +588,7 @@ public enum DashboardPage {
     }
     function panelBody(a, tab) {
       const parts = tab === 'hunt' ? [insights(a), benchmark(a), bestiary(a), kills(a, 8), drops(a)]
-        : tab === 'level' ? [levelPlan(a)] : tab === 'skills' ? [skillsBody(a)] : tab === 'gear' ? [gearBody(a)] : [missions(a)];
+        : tab === 'level' ? [levelPlan(a), whereToHunt(a)] : tab === 'skills' ? [skillsBody(a)] : tab === 'gear' ? [gearBody(a)] : [missions(a)];
       const shown = parts.filter(Boolean);
       return shown.length ? el('div', null, shown) : el('div', { class: 'empty' }, 'Sem dados para esta conta agora.');
     }
@@ -1105,7 +1144,7 @@ public enum DashboardPage {
         setupBtn = el('button', { class: 'pr-btn', type: 'button', style: { marginTop: '8px' } }, 'Setup desta hunt / comparar com outra');
         setupBtn.addEventListener('click', (e) => { e.stopPropagation(); openSetup(h); });
       }
-      const tr = el('tr', { class: 'detail' }, el('td', { colspan: '13' }, el('div', { class: 'detail-grid' }, cells),
+      const tr = el('tr', { class: 'detail' }, el('td', { colspan: '13' }, el('div', { class: 'detail-grid' }, cells), deathBody(h.deathHits),
         spent > 0 ? el('div', { style: { marginTop: '6px' } }, 'Supplies por membro: ' + members.slice().sort((x, y) => num(y.suppliesGold) - num(x.suppliesGold))
           .map((m) => `${vocation(m.vocation)} ${Math.round(100 * num(m.suppliesGold) / spent)}% (${fmt(m.suppliesGold)})`).join(' · ')) : null,
         el('div', { style: { marginTop: '6px' } }, 'Mais abatidos: ' + list(h.kills, 6)),
@@ -1290,10 +1329,43 @@ public enum DashboardPage {
     $('level-hunt').addEventListener('change', () => { try { localStorage.setItem('levelHunt', $('level-hunt').value); } catch (_) {} renderLevels(); });
     $('level-metric').addEventListener('change', renderLevels);
 
+    // ---- this week against the one before, per account ----
+    function renderWeekly(days) {
+      const today = new Date(), cut = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6);
+      const key = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const since = key(cut);
+      const sum = (list, index) => list.reduce((t, d) => {
+        const c = index === null ? d.total : d.accounts[String(index)];
+        if (c) for (const k of ['xp', 'balance', 'huntedSeconds', 'levels', 'deaths', 'runs']) t[k] += num(c[k]);
+        return t;
+      }, { xp: 0, balance: 0, huntedSeconds: 0, levels: 0, deaths: 0, runs: 0 });
+      const now = days.filter((d) => d.date >= since), before = days.filter((d) => d.date < since);
+      if (!now.length) { $('weekly').replaceChildren(el('div', { class: 'empty' }, 'Sem hunts nos últimos 7 dias.')); return; }
+      // Change against the week before, only where that week had something to compare with.
+      const delta = (a, b) => {
+        if (!(b > 0)) return null;
+        const change = Math.round(Math.abs(a / b - 1) * 100);
+        return el('span', { class: 'muted-text', style: { fontSize: '11px', marginLeft: '4px' } }, `${change === 0 ? '±' : a >= b ? '+' : '−'}${change}%`);
+      };
+      const row = (label, swatch, index) => {
+        const a = sum(now, index), b = sum(before, index);
+        return el('tr', null, el('td', null, swatch, label),
+          el('td', { class: 'n' }, fmt(a.xp), delta(a.xp, b.xp)),
+          el('td', { class: 'n ' + (a.balance >= 0 ? 'pos' : 'neg') }, signed(a.balance), b.balance > 0 && a.balance >= 0 ? delta(a.balance, b.balance) : null),
+          el('td', { class: 'n' }, `${(a.huntedSeconds / 3600).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h`, delta(a.huntedSeconds, b.huntedSeconds)),
+          el('td', { class: 'n' }, fmt(a.levels)), el('td', { class: 'n' }, fmt(a.runs)), el('td', { class: 'n' }, fmt(a.deaths)));
+      };
+      $('weekly').replaceChildren(el('table', null,
+        el('thead', null, el('tr', null, el('th', null, 'Conta'), ['XP', 'Lucro', 'Tempo caçado', 'Níveis', 'Hunts', 'Mortes'].map((h) => el('th', { class: 'n' }, h)))),
+        el('tbody', null, lastAccounts.map((a) => row(a.label, el('span', { class: 'swatch', style: { background: SERIES[a.index] } }), a.index)),
+          row(el('b', null, 'Total'), null, null))));
+    }
+
     // ---- daily totals ----
     async function refreshDaily() {
       try {
         const { days } = await getJSON('/api/daily?days=14');
+        renderWeekly(days);
         if (!days.length) { $('daily').replaceChildren(el('div', { class: 'empty' }, 'Sem dados ainda.')); return; }
         const maxHunted = Math.max(1, ...days.map((d) => d.total.huntedSeconds));
         $('daily').replaceChildren(el('table', null,

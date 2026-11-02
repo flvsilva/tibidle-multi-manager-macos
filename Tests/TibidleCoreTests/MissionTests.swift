@@ -313,6 +313,26 @@ final class InsightsTests: XCTestCase {
         store.ingest(account: account, json: #"{"type":"ended","data":{"summary":{"huntId":\#(map),"reason":"\#(reason)","elapsedSec":\#(seconds),"xp":"\#(xp)","lootGold":1,"suppliesGold":1,"killsTotal":\#(seconds / 10),"balance":\#(balance),"deaths":\#(deaths)}}}"#)
     }
 
+    func testWhereToHuntUsesEveryAccountNearTheLevel() {
+        let store = makeStore()
+        func run(_ account: Int, map: Int, level: Int, xp: Int, seconds: Int = 3600) {
+            clock += 60
+            store.ingest(account: account, json: #"{"type":"ended","data":{"summary":{"huntId":\#(map),"reason":"stop","elapsedSec":\#(seconds),"xp":"\#(xp)","balance":100,"damageTaken":7200,"level":{"start":\#(level),"end":\#(level)}}}}"#)
+        }
+        run(0, map: 10, level: 100, xp: 1000)
+        run(1, map: 11, level: 104, xp: 5000)          // another account, a few levels ahead
+        run(2, map: 12, level: 120, xp: 9000)          // too far from the level
+        run(3, map: 11, level: 99, xp: 3000, seconds: 600)  // too short
+        let maps = store.whereToHunt(level: 100, huntId: 10)!
+        let rows = maps["rows"] as! [[String: Any]]
+        XCTAssertEqual(rows.map { $0["huntId"] as? Int }, [11, 10])
+        XCTAssertEqual(rows[0]["xpPerHour"] as? Int, 5000)
+        XCTAssertEqual(rows[0]["damageTakenPerHour"] as? Int, 7200)
+        XCTAssertEqual(rows[1]["current"] as? Bool, true)
+        // Nothing new to show when the only map near the level is the current one.
+        XCTAssertNil(store.whereToHunt(level: 120, huntId: 12))
+    }
+
     func testRankingComparesDamageTakenSuppliesAndLifeDrain() {
         let store = makeStore()
         store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":10,"reason":"stop","elapsedSec":3600,"damageTaken":9000,"suppliesGold":2000,"hits":{"elements":{"COMBAT_LIFEDRAIN":0.6}}}}}"#)
@@ -360,6 +380,11 @@ final class InsightsTests: XCTestCase {
         XCTAssertEqual(total["deaths"] as? Int, 1)
         XCTAssertEqual(total["huntedSeconds"] as? Int, 600)
         XCTAssertNotNil((days[0]["accounts"] as! [String: Any])["0"])
+        // Levels gained come from each finished hunt's level range.
+        clock += 60
+        store.ingest(account: 1, json: #"{"type":"ended","data":{"summary":{"huntId":10,"reason":"stop","elapsedSec":600,"level":{"start":98,"end":100}}}}"#)
+        let after = object(store.dailyJSON(days: 3))["days"] as! [[String: Any]]
+        XCTAssertEqual((after[0]["total"] as! [String: Any])["levels"] as? Int, 2)
     }
 
     func testAttentionListsWhatNeedsAction() {

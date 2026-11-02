@@ -43,6 +43,29 @@ final class GearTests: XCTestCase {
                        "(usado em Zolp): ~7 de dano a menos por segundo (7% do recebido)")
     }
 
+    func testMeasuredPerMemberSuggestsTheMagesProtectionToo() {
+        let accounts = [
+            account(0, "A", [["vocation": "Elite Knight", "level": 100, "hpAverage": 0.8, "gear": ["armor": item("chain armor", ["attrs.armor": 6])]],
+                             ["vocation": "Master Sorcerer", "level": 100, "hpAverage": 0.7, "gear": ["armor": item("blue robe")]]]),
+            account(1, "B", [["vocation": "Elite Knight", "level": 100, "gear": ["armor": item("chain armor", ["attrs.armor": 6])]],
+                             ["vocation": "Master Sorcerer", "level": 100, "gear": ["armor": item("earthborn robe", ["attrs.absorbpercentearth": 10])]]]),
+        ]
+        // The knight only takes melee; the sorcerer takes 30/s of earth spells and 30/s of life drain.
+        let hits: [String: Any] = ["enough": true, "meleePerSecond": 20, "hitsPerSecond": 0.5, "members": [
+            ["position": 0, "magicPerSecond": 0, "elements": [:]],
+            ["position": 1, "magicPerSecond": 60, "elements": ["COMBAT_EARTHDAMAGE": 0.5, "COMBAT_LIFEDRAIN": 0.5]],
+        ]]
+        let combats = GearAdvisor.combats(hits: hits)
+        XCTAssertEqual(combats[0]?.physicalShare, 1)
+        XCTAssertEqual(combats[1]?.physicalShare, 0)
+        XCTAssertEqual(combats[1]?.elements, ["earth": 0.5])
+        let advice = GearAdvisor.suggestions(for: 0, members: GearAdvisor.members(accounts: accounts), combat: .init(takenPerSecond: 80),
+                                             perMember: combats) { _ in nil }
+        // 30/s of earth with 10% protection: 30 × 0.1 / 0.9 ≈ 3.3 of the 60 the sorcerer takes.
+        XCTAssertEqual(advice.map { $0["text"] as? String }, ["Sorcerer · armadura: blue robe → earthborn robe (10% terra) (usado em B): " +
+                                                             "~3 de dano a menos por segundo (6% do que recebe)"])
+    }
+
     func testFallsBackToTheKnightBeforeHealthIsKnown() {
         let accounts = [
             account(0, "A", [["vocation": "Royal Paladin", "level": 100, "gear": ["armor": item("leather armor", ["attrs.armor": 4])]],
@@ -110,6 +133,25 @@ final class HitsTests: XCTestCase {
         let legs = GearAdvisor.Item(slot: "legs", name: "legs", stats: ["attrs.absorbpercentphysical": 10])
         let noMelee = GearAdvisor.Combat(takenPerSecond: 100, hitsPerSecond: 0, physicalShare: 0, elements: ["physical": 1])
         XCTAssertEqual(GearAdvisor.stopped(["legs": legs], shielding: 10, combat: noMelee), 100 * 0.1 / 0.9, accuracy: 0.001)
+    }
+
+    func testKeepsTheMinuteBeforeADeath() {
+        var tracker = HitsTracker()
+        let start = Date(timeIntervalSince1970: 1_000)
+        tracker.add(["creatures": ["Old Rat": ["melee": 999, "magic": 0]]], at: start)
+        for step in 1...30 {
+            tracker.add(["melee": ["hits": 1, "amount": 50], "magic": ["COMBAT_LIFEDRAIN": ["casts": 1, "amount": 80]],
+                         "creatures": ["Ravenlich": ["hits": 0, "melee": 0, "max": 0, "magic": 80], "Hollow Demon": ["hits": 1, "melee": 50, "max": 50, "magic": 0]],
+                         "members": ["1": ["COMBAT_LIFEDRAIN": 80]]], at: start.addingTimeInterval(Double(step) * 3))
+        }
+        tracker.add(["deaths": [1]], at: start.addingTimeInterval(93))
+        let death = tracker.lastDeath!
+        XCTAssertEqual(death["dead"] as? [Int], [1])
+        // 60 s back from the death: the rat from the start is gone, 20 tallies of hits remain.
+        XCTAssertEqual((death["creatures"] as! [[String: Any]]).map { $0["name"] as? String }, ["Ravenlich", "Hollow Demon"])
+        XCTAssertEqual(death["melee"] as? Int, 1000)
+        XCTAssertEqual(death["elements"] as? [String: Int], ["COMBAT_LIFEDRAIN": 1600])
+        XCTAssertEqual(death["members"] as? [String: Int], ["1": 1600])
     }
 
     func testTooShortToMeasure() {

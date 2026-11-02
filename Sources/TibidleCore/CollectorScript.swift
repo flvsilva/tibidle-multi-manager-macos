@@ -171,7 +171,7 @@ public enum CollectorScript {
       // Hits the party takes, tallied on every frame (only one frame in FRAME_INTERVAL_MS is posted) and sent with
       // the next posted one: creature melee (`mhit`, always on the knight) and creature spells (`mcast`) per element,
       // by creature name. Creature ids only map to names here (from `spawn`); they never leave the page.
-      const COMBAT = /"(mhit|mcast|spawn)"/;
+      const COMBAT = /"(mhit|mcast|spawn|death)"/;
       const names = new Map();
       let hits = null;
       const tally = (d) => {
@@ -183,8 +183,16 @@ public enum CollectorScript {
             names.set(e.id, e.name.slice(0, 40));
             continue;
           }
+          // Party members are their position in the party (0 is the knight), never an id.
+          const member = (who) => Number.isInteger(who) && who >= 0 && who < 8 ? who : null;
+          if (e.kind === 'death') {
+            if (member(e.who) === null) continue;
+            hits = hits || { melee: { hits: 0, amount: 0, max: 0 }, magic: {}, creatures: {}, members: {}, deaths: [] };
+            if (hits.deaths.length < 8) hits.deaths.push(e.who);
+            continue;
+          }
           if (e.kind !== 'mhit' && e.kind !== 'mcast') continue;
-          hits = hits || { melee: { hits: 0, amount: 0, max: 0 }, magic: {}, creatures: {} };
+          hits = hits || { melee: { hits: 0, amount: 0, max: 0 }, magic: {}, creatures: {}, members: {}, deaths: [] };
           const name = names.get(e.id) || '?';
           if (!hits.creatures[name] && Object.keys(hits.creatures).length >= 30) continue;
           const c = hits.creatures[name] = hits.creatures[name] || { hits: 0, melee: 0, max: 0, magic: 0 };
@@ -197,6 +205,13 @@ public enum CollectorScript {
             const type = typeof e.type === 'string' && /^[A-Za-z_]{1,32}$/.test(e.type) ? e.type : 'unknown';
             const m = hits.magic[type] = hits.magic[type] || { casts: 0, amount: 0 };
             m.casts += 1; m.amount += amount; c.magic += amount;
+            // Who it landed on, per element: a spell on the mages is not stopped by the knight's gear.
+            if (Array.isArray(e.hits)) for (const h of e.hits.slice(0, 4)) {
+              const who = isObject(h) ? member(h.who) : null;
+              if (who === null) continue;
+              const byType = hits.members[who] = hits.members[who] || {};
+              byType[type] = (byType[type] || 0) + (num(h.amount) || 0);
+            }
           }
         }
       };

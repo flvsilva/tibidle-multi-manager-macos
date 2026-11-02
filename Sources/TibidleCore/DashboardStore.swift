@@ -204,6 +204,16 @@ public final class DashboardStore {
                 }
             }
             if let measured = hits[account]?.summary() { summary["hits"] = measured }
+            // What hit the party in the minute before someone died, with the vocations of the positions.
+            if var death = hits[account]?.lastDeath {
+                let party = (entry["state"] as? [String: Any])?["party"] as? [[String: Any]] ?? []
+                func vocation(_ position: Int) -> String? { party.indices.contains(position) ? party[position]["vocation"] as? String : nil }
+                death["dead"] = ((death["dead"] as? [Int]) ?? []).compactMap(vocation)
+                death["members"] = ((death["members"] as? [String: Int]) ?? [:]).reduce(into: [String: Int]()) { out, item in
+                    if let position = Int(item.key), let v = vocation(position) { out[v, default: 0] += item.value }
+                }
+                summary["deathHits"] = death
+            }
             // The battle setup this hunt ran with, so two hunts can later be compared ("what changed?").
             let setup = presetVocations(entry).reduce(into: [String: Any]()) { $0[$1.vocation] = BattlePreset.normalize($1.config) }
             if !setup.isEmpty { summary["setup"] = setup }
@@ -327,6 +337,11 @@ public final class DashboardStore {
                 out["insights"] = insights
             }
             if entry["status"] as? String == "hunting", let plan = levelPlan(account: index, entry) { out["levelPlan"] = plan }
+            if entry["status"] as? String == "hunting",
+               let level = number(((entry["state"] as? [String: Any])?["character"] as? [String: Any])?["level"]),
+               let maps = whereToHunt(level: level, huntId: number(entry["huntId"]).map { Int($0) }) {
+                out["whereToHunt"] = maps
+            }
             return out
         }
         // Gear advice compares the accounts with each other, so it needs all of them built first.
@@ -343,7 +358,8 @@ public final class DashboardStore {
             let kills = ((account["analyzer"] as? [String: Any])?["kills"] as? [String: Any])?.compactMapValues { number($0) } ?? [:]
             let context = SkillAdvisor.Context(spells: spells, creatures: creatures, kills: kills, crowd: 1)
             let combat = GearAdvisor.combat(analyzer: account["analyzer"] as? [String: Any], hits: account["hits"] as? [String: Any])
-            let gear = GearAdvisor.suggestions(for: index, members: members, combat: combat) { type in
+            let gear = GearAdvisor.suggestions(for: index, members: members, combat: combat,
+                                               perMember: GearAdvisor.combats(hits: account["hits"] as? [String: Any])) { type in
                 let weighted = context.weighted(type)
                 return weighted.coverage > 0 ? weighted.multiplier : nil
             }
@@ -561,7 +577,7 @@ extension DashboardStore {
             let start = calendar.startOfDay(for: now().addingTimeInterval(-Double(days - 1) * 86400))
             func day(_ ts: Double) -> String { formatter.string(from: Date(timeIntervalSince1970: ts)) }
 
-            struct Cell { var xp = 0.0, balance = 0.0, kills = 0.0, runs = 0, deaths = 0.0, huntedSeconds = 0.0 }
+            struct Cell { var xp = 0.0, balance = 0.0, kills = 0.0, runs = 0, deaths = 0.0, huntedSeconds = 0.0, levels = 0.0 }
             var cells: [String: [Int: Cell]] = [:]
             for run in allRuns() where run.endedAt >= start.timeIntervalSince1970 {
                 let key = day(run.endedAt)
@@ -570,6 +586,9 @@ extension DashboardStore {
                 cell.balance += number(run.summary["balance"]) ?? 0
                 cell.kills += number(run.summary["killsTotal"]) ?? 0
                 cell.deaths += number(run.summary["deaths"]) ?? 0
+                if let range = run.summary["level"] as? [String: Any], let start = number(range["start"]), let end = number(range["end"]) {
+                    cell.levels += max(0, end - start)
+                }
                 cell.runs += 1
                 cells[key, default: [:]][run.account] = cell
             }
@@ -588,13 +607,14 @@ extension DashboardStore {
                 var perAccount: [String: Any] = [:]
                 for (account, cell) in accounts {
                     perAccount[String(account)] = ["xp": Int(cell.xp), "balance": Int(cell.balance), "kills": Int(cell.kills), "runs": cell.runs,
-                                                   "deaths": Int(cell.deaths), "huntedSeconds": Int(cell.huntedSeconds)]
+                                                   "deaths": Int(cell.deaths), "huntedSeconds": Int(cell.huntedSeconds), "levels": Int(cell.levels)]
                 }
                 let sum = accounts.values.reduce(Cell()) { Cell(xp: $0.xp + $1.xp, balance: $0.balance + $1.balance, kills: $0.kills + $1.kills,
-                                                                runs: $0.runs + $1.runs, deaths: $0.deaths + $1.deaths, huntedSeconds: $0.huntedSeconds + $1.huntedSeconds) }
+                                                                runs: $0.runs + $1.runs, deaths: $0.deaths + $1.deaths, huntedSeconds: $0.huntedSeconds + $1.huntedSeconds,
+                                                                levels: $0.levels + $1.levels) }
                 return ["date": key, "accounts": perAccount,
                         "total": ["xp": Int(sum.xp), "balance": Int(sum.balance), "kills": Int(sum.kills), "runs": sum.runs,
-                                  "deaths": Int(sum.deaths), "huntedSeconds": Int(sum.huntedSeconds)]]
+                                  "deaths": Int(sum.deaths), "huntedSeconds": Int(sum.huntedSeconds), "levels": Int(sum.levels)]]
             }
             return json(["days": rows])
         }
@@ -973,6 +993,45 @@ extension DashboardStore {
         guard let reference = HuntInsights.reference(runs: runs, huntId: huntId, level: level, now: now().timeIntervalSince1970 * 1000)
         else { return nil }
         return HuntInsights.evaluate(reference: reference, analyzer: analyzer, setup: setup, party: party)
+    }
+
+    /// Maps any of the accounts hunted near this level (±`whereLevels`, 30 min or more, last 60 days), best XP/h
+    /// first: the accounts ahead show where the ones behind can go.
+    static let whereLevels = 5.0
+
+    func whereToHunt(level: Double, huntId: Int?) -> [String: Any]? {
+        struct Total { var seconds = 0.0, xp = 0.0, balance = 0.0, taken = 0.0, deaths = 0.0, accounts = Set<Int>() }
+        var totals: [Int: Total] = [:]
+        let since = now().timeIntervalSince1970 - 60 * 86400
+        for run in allRuns() where run.endedAt >= since {
+            let s = run.summary
+            guard let id = number(s["huntId"]).map({ Int($0) }), id != 1, let seconds = number(s["elapsedSec"]), seconds >= Self.minBenchmarkSeconds,
+                  let range = s["level"] as? [String: Any], let end = number(range["end"]),
+                  abs(((number(range["start"]) ?? end) + end) / 2 - level) <= Self.whereLevels else { continue }
+            var total = totals[id] ?? Total()
+            total.seconds += seconds
+            total.xp += number(s["xp"]) ?? 0
+            total.balance += number(s["balance"]) ?? 0
+            total.taken += number(s["damageTaken"]) ?? 0
+            total.deaths += number(s["deaths"]) ?? 0
+            total.accounts.insert(run.account)
+            totals[id] = total
+        }
+        let rows = totals.filter { $0.value.seconds >= 3600 }.map { id, total -> [String: Any] in
+            let hours = total.seconds / 3600
+            return ["huntId": id, "title": catalog.hunt(id: id)?.title ?? "Hunt #\(id)", "current": id == huntId,
+                    "hours": (hours * 10).rounded() / 10, "xpPerHour": Int((total.xp / hours).rounded()),
+                    "profitPerHour": Int((total.balance / hours).rounded()), "damageTakenPerHour": Int((total.taken / hours).rounded()),
+                    "deaths": Int(total.deaths),
+                    "accounts": total.accounts.sorted().map { names.indices.contains($0) ? names[$0] : "Conta \($0 + 1)" }]
+        }.sorted { ($0["xpPerHour"] as? Int ?? 0) > ($1["xpPerHour"] as? Int ?? 0) }.prefix(6)
+        guard rows.contains(where: { $0["current"] as? Bool != true }) else { return nil }
+        return ["level": Int(level), "range": Int(Self.whereLevels), "rows": Array(rows)]
+    }
+
+    /// Also used by the development server, on top of the app's live state.
+    public func whereToHunt(nearLevel level: Double, current huntId: Int?) -> [String: Any]? {
+        queue.sync { whereToHunt(level: level, huntId: huntId) }
     }
 
     func levelPlan(account: Int, _ entry: [String: Any]) -> [String: Any]? {

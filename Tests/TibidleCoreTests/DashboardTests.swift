@@ -113,7 +113,8 @@ final class CollectorScriptTests: XCTestCase {
             ws.receive(frame([{ kind: 'spawn', id: 9123, name: 'Bog Raider' }, { kind: 'mhit', id: 9123, amount: 40 }]));
             now += 1000;
             ws.receive(frame([{ kind: 'mhit', id: 9123, amount: 60 }, { kind: 'mcast', id: 9123, atk: 'x', type: 'COMBAT_EARTHDAMAGE',
-              hits: [{ who: 0, amount: 25 }, { who: 2, amount: 15 }] }, { kind: 'mhit', id: 4444, amount: 10 }]));
+              hits: [{ who: 0, amount: 25 }, { who: 2, amount: 15 }, { who: 'player-77', amount: 5 }] }, { kind: 'mhit', id: 4444, amount: 10 },
+              { kind: 'death', who: 2 }, { kind: 'death', who: 5551 }]));
             now += 2500;
             ws.receive(frame([]));
             """)
@@ -123,10 +124,13 @@ final class CollectorScriptTests: XCTestCase {
         // The throttled frame's hits come with the next posted frame.
         let hits = all[1]["hits"] as! [String: Any]
         XCTAssertEqual(hits["melee"] as? [String: Int], ["hits": 2, "amount": 70, "max": 60])
-        XCTAssertEqual(hits["magic"] as? [String: [String: Int]], ["COMBAT_EARTHDAMAGE": ["casts": 1, "amount": 40]])
+        XCTAssertEqual(hits["magic"] as? [String: [String: Int]], ["COMBAT_EARTHDAMAGE": ["casts": 1, "amount": 45]])
+        // Per party position only; anything that is not a small position is dropped.
+        XCTAssertEqual(hits["members"] as? [String: [String: Int]], ["0": ["COMBAT_EARTHDAMAGE": 25], "2": ["COMBAT_EARTHDAMAGE": 15]])
+        XCTAssertEqual(hits["deaths"] as? [Int], [2])
         XCTAssertEqual(Set((hits["creatures"] as! [String: Any]).keys), ["Bog Raider", "?"])
         let text = String(data: try! JSONSerialization.data(withJSONObject: all), encoding: .utf8)!
-        for forbidden in ["9123", "4444"] { XCTAssertFalse(text.contains(forbidden), "\(forbidden) leaked") }
+        for forbidden in ["9123", "4444", "player-77", "5551"] { XCTAssertFalse(text.contains(forbidden), "\(forbidden) leaked") }
     }
 
     func testDoesNotTouchOutgoingMessagesOrOtherSites() {
