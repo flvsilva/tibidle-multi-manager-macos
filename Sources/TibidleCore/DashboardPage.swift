@@ -719,7 +719,7 @@ public enum DashboardPage {
       const m = (r.members || [])[0];
       const note = r.source === 'history'
         ? `pelo histórico do mapa (${r.deaths} mortes em ${r.hours} h)`
-        : `pela vida perdida nos últimos ${Math.min(20, num(r.minutes))} min${m && p >= 0.01 ? ` · mais exposto: ${vocation(m.vocation)}` : ''}`;
+        : `pela vida perdida nos últimos ${Math.min(20, num(r.minutes))} min e ${r.hours} h do mapa${m && p >= 0.01 ? ` · mais exposto: ${vocation(m.vocation)}` : ''}`;
       const title = m ? `Maior perda de vida em 3 s (já com a cura): ${fmt(m.biggestWindow)} · vida mínima ${fmt(m.lowestHealth)}/${fmt(m.maxHealth)}` : '';
       return el('div', { class: 'madvice', style: { marginTop: '8px' }, title },
         'Risco de morte ', el('b', { class: cls }, `~${pct}%/h`), ` · ${note}`);

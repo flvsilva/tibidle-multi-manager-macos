@@ -212,7 +212,7 @@ public final class DashboardStore {
             if let measured = hits[account]?.summary() { summary["hits"] = measured }
             // What the death risk expected over the hunt, to check it against the deaths seen.
             if let tracker = risk[account], tracker.covered >= 600 {
-                summary["deathRisk"] = ["expected": tracker.expected, "hours": tracker.covered / 3600]
+                summary["deathRisk"] = ["expected": tracker.expected, "hours": tracker.covered / 3600, "model": DeathRisk.model]
             }
             risk[account] = nil
             // What hit the party in the minute before someone died, with the vocations of the positions.
@@ -1043,38 +1043,45 @@ extension DashboardStore {
         return ["level": Int(level), "range": Int(Self.whereLevels), "rows": Array(rows)]
     }
 
-    /// The chance of a death in the next hour: from the hunt's own windows of damage once there are enough
-    /// (calibrated by finished hunts), from the map's deaths near this level before that.
+    /// The chance of a death in the next hour: the hunt's own losses of health once there are enough (calibrated by
+    /// finished hunts), put together with the map's deaths near this level, which stand in alone before that.
     func deathRisk(_ index: Int, _ entry: [String: Any]) -> [String: Any]? {
         let runs = allRuns()
-        let calibration = DeathRisk.calibration(runs.compactMap { run in
-            (run.summary["deathRisk"] as? [String: Any]).flatMap { number($0["expected"]) }.map { ($0, number(run.summary["deaths"]) ?? 0) }
-        })
-        if var live = risk[index]?.estimate(now: now()), let rate = live["rate"] as? Double {
-            live["perHour"] = 1 - exp(-rate * calibration.factor)
-            live["members"] = (live["members"] as? [[String: Any]] ?? []).map { member in
-                var out = member
-                let p = number(member["perHour"]) ?? 0
-                out["perHour"] = 1 - exp(log(max(1e-12, 1 - p)) * calibration.factor)
-                return out
-            }
-            live["calibratedWith"] = calibration.runs >= 10 ? calibration.runs : 0
-            return live
-        }
         let level = number(((entry["state"] as? [String: Any])?["character"] as? [String: Any])?["level"])
-        guard let huntId = number(entry["huntId"]).map({ Int($0) }), let level else { return nil }
+        let huntId = number(entry["huntId"]).map { Int($0) }
         var deaths = 0.0, hours = 0.0, allDeaths = 0.0, allHours = 0.0
         for run in runs {
             let s = run.summary
             guard let seconds = number(s["elapsedSec"]), seconds >= Self.minRankedSeconds else { continue }
             allDeaths += number(s["deaths"]) ?? 0
             allHours += seconds / 3600
-            guard number(s["huntId"]).map({ Int($0) }) == huntId, let range = s["level"] as? [String: Any], let end = number(range["end"]),
+            guard let level, number(s["huntId"]).map({ Int($0) }) == huntId, let range = s["level"] as? [String: Any], let end = number(range["end"]),
                   abs(((number(range["start"]) ?? end) + end) / 2 - level) <= Self.whereLevels else { continue }
             deaths += number(s["deaths"]) ?? 0
             hours += seconds / 3600
         }
-        return DeathRisk.fromHistory(deaths: deaths, hours: hours, overallRate: allHours > 0 ? allDeaths / allHours : 0)
+        let overall = allHours > 0 ? allDeaths / allHours : 0
+        let history = huntId == nil || level == nil ? nil : DeathRisk.fromHistory(deaths: deaths, hours: hours, overallRate: overall)
+        guard var live = risk[index]?.estimate(now: now()), let measured = live["rate"] as? Double else { return history }
+        let calibration = DeathRisk.calibration(runs.compactMap { run in
+            // Only hunts predicted by this model: the earlier ones expected far too many deaths.
+            (run.summary["deathRisk"] as? [String: Any]).flatMap { $0["model"] as? Int == DeathRisk.model ? number($0["expected"]) : nil }
+                .map { ($0, number(run.summary["deaths"]) ?? 0) }
+        })
+        let rate = DeathRisk.combined(live: measured * calibration.factor, deaths: deaths, hours: hours, overallRate: overall)
+        // Members keep their share of the party's live rate.
+        live["members"] = (live["members"] as? [[String: Any]] ?? []).map { member in
+            var out = member
+            let own = -log(max(1e-12, 1 - (number(member["perHour"]) ?? 0)))
+            out["perHour"] = 1 - exp(-(measured > 0 ? rate * own / measured : 0))
+            return out
+        }
+        live["rate"] = rate
+        live["perHour"] = 1 - exp(-rate)
+        live["deaths"] = Int(deaths)
+        live["hours"] = (hours * 10).rounded() / 10
+        live["calibratedWith"] = calibration.runs >= 10 ? calibration.runs : 0
+        return live
     }
 
     /// Also used by the development server, on top of the app's live state.

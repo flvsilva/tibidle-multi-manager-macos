@@ -155,7 +155,7 @@ public enum Attention {
             detail = " Mais exposto: \(vocationName(top["vocation"])) — em 3 s chegou a perder \(Int(number(top["biggestWindow"]))) de vida, com vida mínima de \(Int(number(top["lowestHealth"])))/\(Int(number(top["maxHealth"])))."
         }
         return AttentionItem(key: "deathrisk|\(i)|\(hunt)|\(level)", account: i, kind: "risk", level: level,
-                             text: "\(label): risco de morte ~\(percent)%/h pela vida perdida nesta hunt.\(detail)", notify: level == "bad")
+                             text: "\(label): risco de morte ~\(percent)%/h pela vida perdida nesta hunt e o histórico do mapa.\(detail)", notify: level == "bad")
     }
 
     /// A sorcerer's wand or druid's rod of an element the hunt's monsters resist (from the gear advice).

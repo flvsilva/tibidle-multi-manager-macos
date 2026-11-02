@@ -47,6 +47,24 @@ final class DeathRiskTests: XCTestCase {
         XCTAssertLessThan(risk.estimate(now: start.addingTimeInterval(1200))!["perHour"] as! Double, 0.001)
     }
 
+    func testBigLossesNearFullHealthDoNotCountAtLowHealth() {
+        // The knight loses up to 1100 only from full health and is healed back up from anywhere below: a window
+        // at 45% is judged by the windows that started near 45%, which never lost health.
+        var risk = DeathRisk()
+        var hp = 2000.0
+        for i in 0..<400 {
+            if hp >= 1800 { hp -= Double((i * 37) % 1100) } else { hp = min(2000, hp + 400) }
+            risk.add(party: [["vocation": "KNIGHT", "hp": hp, "maxHp": 2000]], at: start.addingTimeInterval(Double(i) * 3))
+        }
+        XCTAssertLessThan(risk.estimate(now: start.addingTimeInterval(1200))!["perHour"] as! Double, 0.01)
+    }
+
+    func testTheMapHistoryOutweighsAFewMinutes() {
+        // 400 hours with one death keep a noisy 20%/h near the map's rate; a map never hunted follows the live rate.
+        XCTAssertLessThan(DeathRisk.combined(live: 0.2, deaths: 1, hours: 400, overallRate: 0.01), 0.01)
+        XCTAssertEqual(DeathRisk.combined(live: 0.2, deaths: 0, hours: 0, overallRate: 0.01), (0.1 + 2) / 20, accuracy: 1e-9)
+    }
+
     func testGapsAreNotWindows() {
         var risk = DeathRisk()
         for i in 0..<300 {
@@ -76,7 +94,7 @@ final class DeathRiskTests: XCTestCase {
         let item = Attention.evaluate(accounts: [entry], now: 0).first { $0.key.hasPrefix("deathrisk") }!
         XCTAssertEqual(item.level, "bad")
         XCTAssertTrue(item.notify)
-        XCTAssertEqual(item.text, "Zolp: risco de morte ~18%/h pela vida perdida nesta hunt. Mais exposto: Druid — em 3 s chegou a perder 640 de vida, com vida mínima de 310/800.")
+        XCTAssertEqual(item.text, "Zolp: risco de morte ~18%/h pela vida perdida nesta hunt e o histórico do mapa. Mais exposto: Druid — em 3 s chegou a perder 640 de vida, com vida mínima de 310/800.")
         var low = entry; low["deathRisk"] = ["perHour": 0.02, "source": "live"]
         XCTAssertNil(Attention.evaluate(accounts: [low], now: 0).first { $0.key.hasPrefix("deathrisk") })
         var history = entry; history["deathRisk"] = ["perHour": 0.2, "source": "history", "deaths": 4, "hours": 15.3]
