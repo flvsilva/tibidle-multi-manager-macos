@@ -99,6 +99,19 @@ final class HitsTests: XCTestCase {
         XCTAssertEqual(GearAdvisor.stopped(["armor": cape], shielding: 10, combat: combat), 30 * 0.1 / 0.9, accuracy: 0.001)
     }
 
+    func testConditionsCountAsTheirElementAndLifeDrainAsUnprotected() {
+        let hits: [String: Any] = ["enough": true, "meleeShare": 0.2, "hitsPerSecond": 0.5,
+                                   "elements": ["COMBAT_LIFEDRAIN": 0.4, "CONDITION_POISON": 0.2, "COMBAT_EARTHDAMAGE": 0.1, "CONDITION_BLEEDING": 0.1]]
+        let combat = GearAdvisor.combat(analyzer: ["elapsedMs": 600_000, "damageTaken": 60_000], hits: hits)!
+        XCTAssertEqual(combat.elements["earth"] ?? 0, 0.375, accuracy: 0.001)
+        XCTAssertEqual(combat.elements["physical"] ?? 0, 0.125, accuracy: 0.001)
+        XCTAssertNil(combat.elements["lifedrain"])
+        // Bleeding meets physical protection: 100/s × 0.8 magic × 0.125 = 10/s, 10% of it is 10 × 0.1 / 0.9 (plus the melee part).
+        let legs = GearAdvisor.Item(slot: "legs", name: "legs", stats: ["attrs.absorbpercentphysical": 10])
+        let noMelee = GearAdvisor.Combat(takenPerSecond: 100, hitsPerSecond: 0, physicalShare: 0, elements: ["physical": 1])
+        XCTAssertEqual(GearAdvisor.stopped(["legs": legs], shielding: 10, combat: noMelee), 100 * 0.1 / 0.9, accuracy: 0.001)
+    }
+
     func testTooShortToMeasure() {
         var tracker = HitsTracker()
         tracker.add(["melee": ["hits": 3, "amount": 90, "max": 40]], at: Date(timeIntervalSince1970: 0))

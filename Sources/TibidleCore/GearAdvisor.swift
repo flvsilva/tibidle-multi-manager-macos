@@ -26,6 +26,10 @@ public enum GearAdvisor {
         "northwind rod": "COMBAT_ICEDAMAGE", "hailstorm rod": "COMBAT_ICEDAMAGE", "glacial rod": "COMBAT_ICEDAMAGE",
         "necrotic rod": "COMBAT_DEATHDAMAGE", "underworld rod": "COMBAT_DEATHDAMAGE",
     ]
+    /// Damage types whose protection is not in their name.
+    static let protectedBy = ["CONDITION_POISON": "earth", "CONDITION_BURNING": "fire", "CONDITION_ENERGY": "energy",
+                              "CONDITION_FREEZING": "ice", "CONDITION_DAZZLED": "holy", "CONDITION_CURSED": "death",
+                              "CONDITION_BLEEDING": "physical"]
     static let shootTypes = ["fire": "COMBAT_FIREDAMAGE", "energy": "COMBAT_ENERGYDAMAGE", "earth": "COMBAT_EARTHDAMAGE", "poison": "COMBAT_EARTHDAMAGE",
                              "ice": "COMBAT_ICEDAMAGE", "death": "COMBAT_DEATHDAMAGE", "holy": "COMBAT_HOLYDAMAGE"]
 
@@ -98,7 +102,8 @@ public enum GearAdvisor {
         let byShield = defense > 0 ? 0.75 * 0.08 * (skill / 4 + 2.23) * defense * min(hits, 1) : 0
         // Physical protection comes first, on the raw hit, before shield and armor take their part.
         let protection = min(0.9, items.values.reduce(0) { $0 + $1.physical } / 100)
-        let byProtection = (physical + byArmor + byShield) * protection / (1 - protection)
+        // Physical spells and bleeding meet it too, without the shield and armor.
+        let byProtection = (physical + byArmor + byShield + magic * (combat.elements["physical"] ?? 0)) * protection / (1 - protection)
         // Magic skips shield and armor: only the protection to its element counts.
         let byElement = elementNames.reduce(0.0) { sum, element in
             let share = combat.elements.isEmpty ? 1 / Double(elementNames.count) : combat.elements[element] ?? 0
@@ -135,10 +140,13 @@ public enum GearAdvisor {
         combat.physicalShare = share
         combat.hitsPerSecond = HuntInsights.number(hits["hitsPerSecond"]) ?? combat.hitsPerSecond
         // Shares of all the damage, made shares of the magic part, keyed like the protections ("fire", "ice"…).
+        // Conditions hurt as their element; physical spells and bleeding only meet physical protection;
+        // life drain and anything else no item protects against.
         let magic = max(1e-9, 1 - share)
         var elements: [String: Double] = [:]
         for (type, value) in (hits["elements"] as? [String: Any]) ?? [:] {
-            let key = type.lowercased().replacingOccurrences(of: "combat_", with: "").replacingOccurrences(of: "damage", with: "")
+            guard let key = protectedBy[type] ?? Optional(type.lowercased().replacingOccurrences(of: "combat_", with: "")
+                .replacingOccurrences(of: "damage", with: "")), key == "physical" || elementNames.contains(key) else { continue }
             elements[key, default: 0] += (HuntInsights.number(value) ?? 0) / magic
         }
         combat.elements = elements

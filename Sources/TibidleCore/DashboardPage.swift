@@ -358,7 +358,9 @@ public enum DashboardPage {
     };
 
     const ELEMENT = { COMBAT_PHYSICALDAMAGE: 'físico', COMBAT_FIREDAMAGE: 'fogo', COMBAT_ENERGYDAMAGE: 'energia', COMBAT_EARTHDAMAGE: 'terra',
-      COMBAT_ICEDAMAGE: 'gelo', COMBAT_HOLYDAMAGE: 'sagrado', COMBAT_DEATHDAMAGE: 'morte' };
+      COMBAT_ICEDAMAGE: 'gelo', COMBAT_HOLYDAMAGE: 'sagrado', COMBAT_DEATHDAMAGE: 'morte', COMBAT_LIFEDRAIN: 'dreno de vida',
+      COMBAT_MANADRAIN: 'dreno de mana', CONDITION_POISON: 'veneno', CONDITION_BURNING: 'queimadura', CONDITION_ENERGY: 'eletrificado',
+      CONDITION_FREEZING: 'congelamento', CONDITION_DAZZLED: 'ofuscado', CONDITION_CURSED: 'maldição', CONDITION_BLEEDING: 'sangramento' };
     const BONUS = { maxHealth: 'Vida máxima', maxMana: 'Mana máxima', capacity: 'Capacidade', armor: 'Armadura', attack: 'Ataque', melee: 'Corpo a corpo',
       distance: 'Distância', shielding: 'Escudo', magicLevel: 'Nível mágico', hpRegen: 'Regen. de vida', manaRegen: 'Regen. de mana' };
     function bestiary(a) {
