@@ -945,9 +945,10 @@ public enum DashboardPage {
       const rows = [...groups].map(([index, list]) => {
         const label = (data.accounts.find((x) => x.index === index) || {}).label || '';
         const strip = (t) => label && t.startsWith(label) ? t.slice(label.length).replace(/^\s*[:·]\s*/, '') : t;
+        const bullet = (t) => { const s = strip(t); return s.charAt(0).toUpperCase() + s.slice(1); };
         const level = list.reduce((worst, i) => (RANK[i.level] || 0) > (RANK[worst] || 0) ? i.level : worst, list[0].level);
         return el('div', { class: 'item ' + level }, el('span', { class: 'swatch', style: { background: SERIES[index] } }),
-          el('div', null, label ? el('b', null, label) : null, list.length === 1 ? ` ${strip(list[0].text)}` : el('ul', null, list.map((i) => el('li', null, strip(i.text))))));
+          el('div', null, label ? el('b', null, label) : null, list.length === 1 ? `: ${strip(list[0].text)}` : el('ul', null, list.map((i) => el('li', null, bullet(i.text))))));
       });
       $('attention').replaceChildren(...(rows.length ? rows : [el('div', { class: 'ok' }, '✓ Nada precisa de atenção agora.')]));
     }

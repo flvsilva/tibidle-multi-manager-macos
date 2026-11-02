@@ -28,7 +28,7 @@ public enum Attention {
     static let elements = ["COMBAT_PHYSICALDAMAGE": "físico", "COMBAT_FIREDAMAGE": "fogo", "COMBAT_ENERGYDAMAGE": "energia",
                            "COMBAT_EARTHDAMAGE": "terra", "COMBAT_ICEDAMAGE": "gelo", "COMBAT_HOLYDAMAGE": "sagrado", "COMBAT_DEATHDAMAGE": "morte"]
     static let badReasons: [String: (String, String)] = [
-        "death": ("bad", "morreu"), "no_gold": ("warn", "ficou sem gold"), "cap_full": ("warn", "terminou por mochila cheia"),
+        "death": ("bad", "terminou em morte"), "no_gold": ("warn", "ficou sem gold"), "cap_full": ("warn", "terminou por mochila cheia"),
         "prey_resync_failed": ("warn", "falhou no prey"), "expired": ("info", "teve o tempo esgotado"),
     ]
 

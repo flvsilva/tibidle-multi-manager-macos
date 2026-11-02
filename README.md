@@ -1,157 +1,192 @@
 # Tibidle Multi-Manager para macOS
 
-Aplicativo de comunidade para jogar [Tibidle](https://play.tibidle.com/) no macOS com quatro contas em uma janela. Port nativo do [Tibidle Multi-Manager para Windows](https://github.com/danbatista/tibidle-multi-manager), feito em Swift, AppKit e WebKit (`WKWebView`), sem dependências externas.
+Aplicativo de comunidade para jogar [Tibidle](https://play.tibidle.com/) no macOS com quatro contas em uma janela, com uma **dashboard de hunts** que mostra o que cada conta está rendendo e o que dá para melhorar. Port nativo do [Tibidle Multi-Manager para Windows](https://github.com/danbatista/tibidle-multi-manager), feito em Swift, AppKit e WebKit (`WKWebView`), sem dependências externas.
 
-Cada pessoa entra com suas próprias contas diretamente no site do jogo. Não há assinatura nem serviço próprio do gerenciador. Código aberto sob a [licença MIT](LICENSE).
+**O app só lê o jogo.** Ele não clica, não envia comandos nem automatiza nada: você joga normalmente em cada aba, e a dashboard apenas observa o que o servidor manda para a página (veja [Como os dados são coletados](#como-os-dados-são-coletados)).
 
-Contato: flv.silva@yahoo.com.br
+Cada pessoa entra com suas próprias contas diretamente no site do jogo. Não há assinatura nem serviço próprio do gerenciador. Código aberto sob a [licença MIT](LICENSE). Contato: flv.silva@yahoo.com.br
 
-## Recursos
+![Dashboard de hunts com dados de exemplo](docs/dashboard.png)
 
-- Quatro abas com perfis de navegador separados (cookies e armazenamento isolados).
-- Logins e preferências persistentes entre aberturas.
-- Visualização normal ou quatro telas em grade 2 × 2.
-- Arraste as abas para reorganizar; a grade segue a mesma ordem.
-- Nome personalizado, som e recarregamento por conta.
-- Atalhos `⌘1` a `⌘4`, seguindo a ordem visual.
-- Trocar de visualização ou reorganizar não recarrega as páginas.
-- Páginas ocultas continuam rodando em velocidade normal (`inactiveSchedulingPolicy = .none`).
-- Zoom por conta (`⌘+`, `⌘-`, `⌘0`) e tela cheia (`⌃⌘F`).
-- **Limpar sessão** por conta: apaga cookies e dados só daquele perfil.
-- **Dashboard de hunts** no navegador, acessível pela rede local (veja abaixo).
+## Baixar e instalar
 
-**Requisitos:** macOS 14 Sonoma ou mais recente, Apple Silicon ou Intel. É necessária internet para jogar.
+1. Baixe **TibidleMultiManager-macOS.dmg** na [última release](https://github.com/flvsilva/tibidle-multi-manager-macos/releases/latest).
+2. Abra o DMG e arraste o app para **Aplicativos**.
+3. Na primeira abertura o macOS bloqueia, porque o app não tem assinatura da Apple (Developer ID): clique em **OK**, vá em **Ajustes do Sistema → Privacidade e Segurança** e clique em **Abrir Mesmo Assim**. Pelo Terminal: `xattr -dr com.apple.quarantine "/Applications/Tibidle Multi-Manager.app"`.
 
-## Baixar
+**Atualizar:** quando sai uma versão nova, a dashboard mostra o link **Versão X disponível** no topo. Baixe o DMG novo e substitua o app em Aplicativos; logins, nomes e histórico ficam fora do app e são mantidos.
 
-Baixe **TibidleMultiManager-macOS.dmg** na [última release](https://github.com/flvsilva/tibidle-multi-manager-macos/releases/latest), abra e arraste o app para **Aplicativos**.
-
-O app não tem assinatura da Apple (Developer ID), então na primeira abertura o macOS bloqueia: clique em **OK**, vá em **Ajustes do Sistema → Privacidade e Segurança** e clique em **Abrir Mesmo Assim** no aviso do Tibidle Multi-Manager. Pelo Terminal: `xattr -dr com.apple.quarantine "/Applications/Tibidle Multi-Manager.app"`.
-
-## Compilar e instalar
-
-Requer as Command Line Tools do Xcode (`xcode-select --install`) ou o Xcode.
-
-```sh
-./scripts/build-app.sh
-```
-
-Resultado:
-
-- `dist/Tibidle Multi-Manager.app` — arraste para `/Applications`.
-- `dist/TibidleMultiManager-macOS.dmg` e `dist/TibidleMultiManager-macOS.zip` — pacotes para distribuir (binário universal arm64 + x86_64).
-
-O app é assinado *ad hoc* (sem Developer ID); ao abrir um pacote baixado da internet, libere como em [Baixar](#baixar).
-
-Para publicar uma versão: `./scripts/release.sh 1.0.0` (com tudo commitado e enviado; roda os testes, gera os pacotes, cria a tag `v1.0.0` e a release no GitHub com o DMG e o ZIP).
+**Requisitos:** macOS 14 Sonoma ou mais recente, Apple Silicon ou Intel, e internet para jogar.
 
 ## Como usar
 
 1. **Login:** abra cada aba e entre na conta desejada no site do jogo.
 2. **Nome:** altere **Nome da conta** e clique em **Salvar nome** (ou Enter).
-3. **Visualização:** **4 telas** mostra a grade; **Tela normal** amplia a conta selecionada (`⇧⌘G`).
+3. **Visualização:** **4 telas** mostra a grade 2 × 2; **Tela normal** amplia a conta selecionada (`⇧⌘G`).
 4. **Ordem:** arraste uma aba sobre outra. A ordem é salva na hora e vale na grade da esquerda para a direita, de cima para baixo.
-5. **Seleção:** use a aba, o título do bloco ou clique no jogo. Som (`⇧⌘M`) e Recarregar (`⌘R`) atuam na conta selecionada.
-6. **Atalhos:** `⌘1` a `⌘4` selecionam as posições atuais.
+5. **Seleção:** use a aba, o título do bloco ou clique no jogo. Som (`⇧⌘M`) e Recarregar (`⌘R`) atuam na conta selecionada; `⌘1` a `⌘4` selecionam as posições atuais.
+6. **Dashboard:** **Dashboard → Abrir dashboard** (`⇧⌘D`).
 
-Fechar a janela encerra o aplicativo e mantém seus dados. Abrir o app de novo com ele já aberto apenas traz a janela para frente.
+Também há zoom por conta (`⌘+`, `⌘-`, `⌘0`), tela cheia (`⌃⌘F`) e **Limpar sessão**, que apaga cookies e dados só daquele perfil. Cada aba tem seu próprio perfil de navegador (cookies e armazenamento isolados), e páginas ocultas continuam rodando em velocidade normal. Trocar de visualização ou reorganizar não recarrega as páginas. Fechar a janela encerra o aplicativo e mantém seus dados.
 
 ## Dashboard de hunts
 
-Com o app aberto, acesse **Dashboard → Abrir dashboard** (`⇧⌘D`) ou, de outro aparelho na mesma rede, o endereço mostrado na barra inferior do app (por exemplo `http://192.168.0.10:8787`; **Dashboard → Copiar endereço para a rede local**). Se o macOS perguntar se o app pode aceitar conexões de entrada, permita.
+Abra em **Dashboard → Abrir dashboard** ou, de outro aparelho na mesma rede (celular, tablet), pelo endereço mostrado na barra inferior do app, por exemplo `http://192.168.0.10:8787` (**Dashboard → Copiar endereço para a rede local**). Se o macOS perguntar se o app pode aceitar conexões de entrada, permita. A página atualiza sozinha.
 
-A página atualiza sozinha e mostra:
+### No topo
 
-- um cartão por conta com o essencial: status (caçando, na cidade, desconectada), XP/h, lucro/h, tempo, kills/h, balance, supplies/h, dano recebido e lucro por kill, monstros mais abatidos, chaves e mochila, e HP/mana da party com a **parte dos supplies de cada membro** (em destaque quando um só gasta metade ou mais; o nome de quem mais apanha fica em destaque). Os detalhes ficam num **painel por conta** com abas (**Hunt**, **Nível**, **Skills**, **Equipamento**, **Missões**), aberto pelos botões do cartão, que já mostram o resumo de cada aba (queda em relação à melhor hunt, tempo até o próximo nível, número de sugestões);
-- **mesma hunt, lado a lado**: quando duas ou mais contas caçam no mesmo mapa, uma tabela compara lucro, loot, supplies, XP, kills, dano causado e recebido, cura, supplies/kill, lucro/1k XP e cura ÷ dano recebido por hora; fica em vermelho o que está 20% ou mais pior que a melhor conta (contas com menos de 10 min ficam de fora);
-- o **histórico no mesmo nível** (aba Hunt): como as hunts encerradas de 30 min ou mais nesse mapa renderam no nível atual ±2, por conta (lucro, supplies e kills por hora), para separar "é o nível" de "é o setup";
-- **comparado à sua melhor hunt recente** (aba Hunt): a hunt mais lucrativa da conta nesse mapa nas últimas 2 semanas (nível ±5, 30 min ou mais), o lucro/h de lá e de agora, o que mudou no setup de batalha desde então e os **supplies por hora de cada membro** agora e naquela hunt, com as mudanças de cura, poção e munição de quem passou a gastar mais; um botão abre o setup completo daquela hunt, e cada vocação pode ser salva como preset;
-- **quem apanha e quanto custa curar**: HP média (e mínima) de cada membro na hunt, dano recebido por kill (o dano causado por kill é o HP do monstro, então isso separa defesa de velocidade de kill) e supplies por 1k de cura, no cartão e na tabela lado a lado; o **equipamento da party** (nome e números de cada slot) fica na aba Equipamento e é guardado no resumo de cada hunt;
-- **dano recebido medido** (aba Equipamento): golpe a golpe, quanto é corpo a corpo (golpes por segundo, média e máximo) e quanto é magia de cada elemento, e as criaturas que mais machucam; vai também para o resumo de cada hunt;
-- **melhorias de equipamento** (aba Equipamento): para quem mais apanha (menor HP média na hunt; antes disso, o knight), cada slot de defesa é comparado com o melhor item que suas outras contas usam na mesma vocação (no jogo, item só exige vocação), em dano a menos por segundo pelas regras de combate da wiki: armadura tira em média 0,75 por ponto de cada golpe corpo a corpo, o escudo bloqueia 0,06 × (Escudo/4 + 2,23) × defesa até 1 golpe por segundo, a proteção física age no golpe inteiro e a magia só sente a proteção do elemento dela; com o dano medido (depois de 2 min e 20 golpes) a divisão entre corpo a corpo e magia por elemento é a real, antes disso uma divisão típica; a wand/rod de sorcerer e druid é comparada com o elemento que os monstros da hunt resistem, indicando a de outra conta (ou o elemento) que rende mais; as até 4 trocas de maior impacto aparecem primeiro;
-- o **próximo nível** (aba Nível): XP que falta, tempo no ritmo atual e, nas hunts que a conta fez perto desse nível, XP/h, lucro/h, tempo até subir e o gold ganho (ou gasto) até lá;
-- um gráfico de **lucro por nível** em cada mapa (ou supplies, XP e kills por hora), um ponto por hunt encerrada de 30 min ou mais, com tabela;
-- gráficos de XP/h e lucro/h nas últimas 1 h, 6 h, 12 h, 24 h ou 7 dias, com tabela;
-- o histórico de hunts encerradas: duração, motivo (morte, cap cheio, sem gold…), level, XP, loot, supplies, balance e mortes;
-- as **missões diárias** de cada conta (aba Missões): progresso, tempo até o reset e se a hunt atual conta ou não;
-- a **hunt sugerida** para cada missão de monstro, quando a hunt atual não conta ou nada está em andamento;
-- o progresso offline informado pelo jogo ao reconectar;
-- um **resumo geral** (XP/h e lucro/h somados, contas caçando, missões a resgatar, reset diário) e um painel **"precisa de atenção"**, uma linha por conta: missão pronta, sequência semanal em risco, mochila ou bolsa de chaves cheia, hunt que terminou por morte/sem gold/cap cheio, conta parada na cidade e sessão aberta em outro lugar, recompensa do calendário de login a resgatar **invasão** (inscrição aberta sem você ter entrado, ou começando em até 15 min), **lucro 20% abaixo da melhor hunt recente com o setup mudado**, skill de um **elemento que os monstros resistem** (menos de 50% do dano) que ainda dispara, membro que passa a hunt com **menos de 10% de mana**, e **hunt arriscada**: alguém chegou a menos de 30% da vida (abaixo de 15% notifica) ou um golpe corpo a corpo leva 35%+ da vida do knight, dizendo qual criatura mais machuca;
-- a **previsão** de cada missão de monstro (kills/h dos alvos → quando conclui e se dá tempo antes do reset), a **sequência semanal**, as **metas semanais**, as chaves (com hora da próxima) e a mochila;
-- **totais por dia** (XP, lucro, kills, horas caçadas por conta) e um **ranking de hunts** por mapa (XP/h, lucro/h, kills/h, dano recebido/h, supplies/h, mortes), com filtro por conta e ordenação por menos dano ou menos supplies; nas hunts com golpes medidos, a dica da coluna de dano mostra quanto foi dreno de vida, que nenhum item protege; só entram hunts de 5 min ou mais;
-- detalhes de cada hunt encerrada (clique na linha): lucro/h e por kill, supplies/kill, lucro por 1k XP, dano recebido e cura, supplies por membro, causa da morte, monstros e drops, e o **setup da hunt**: as configurações de batalha com que ela rodou e o que mudou em relação a outra hunt (por padrão, a anterior da mesma conta no mesmo mapa). Só hunts encerradas a partir desta versão guardam o setup, que é o que o app leu ao abrir o jogo ou retomar a hunt;
-- o **bestiário da hunt** atual (aba Hunt): kills registradas no mapa, os três marcos de bônus, o tempo estimado até o próximo marco e até completar (pela taxa de kills/h da hunt em andamento; as kills da hunt atual são somadas ao contador do servidor, então é uma estimativa);
-- **análise de skills** (aba Skills) de cada personagem da party: dano estimado por skill contra os monstros da hunt (resistências do bestiário público do jogo), avisos de elemento que os alvos resistem e sugestões de troca ou adição com o ganho estimado e o custo de mana (veja abaixo);
-- exportação em **CSV** do histórico de hunts e das amostras por minuto.
+- **Resumo geral:** XP/h e lucro/h somados, contas caçando, missões a resgatar e tempo até o reset diário.
+- **Precisa de atenção**, agrupado por conta:
+  - missão pronta para resgatar, sequência semanal em risco, recompensa do calendário de login;
+  - mochila ou bolsa de chaves cheia (chaves que caem com a bolsa cheia se perdem);
+  - hunt que terminou por morte, sem gold ou com cap cheio; conta parada na cidade; sessão aberta em outro lugar;
+  - invasão com inscrição aberta sem você ter entrado, ou começando em até 15 min;
+  - lucro 20% abaixo da sua melhor hunt recente no mapa, com o setup mudado;
+  - skill de um elemento que os monstros resistem (menos de 50% do dano) que ainda dispara, e membro com menos de 10% de mana em média;
+  - **hunt arriscada:** alguém chegou a menos de 30% da vida, ou um golpe corpo a corpo leva 35% ou mais da vida do knight, com a criatura que mais machuca.
 
-**Análise de skills.** O app combina três dados: as skills equipadas e seus níveis (lidos do jogo, só números e nomes de skills), as fórmulas e elementos de cada magia (`https://play.tibidle.com/spells`) e as resistências de cada monstro abatido (`/bestiary/creature`, baixadas sob demanda e guardadas em `creatures-cache.json`). Com isso ele simula a rotação da party (a primeira skill da prioridade que está pronta e atende ao mínimo de criaturas) e estima o dano por segundo. O dano exibido é uma **estimativa**: o app não conhece as regras internas do servidor.
-Ele **aprende com as suas hunts**: ao fim de cada hunt iniciada com o app aberto, compara o dano previsto com o dano real informado pelo jogo (tabela `calibration` em `dashboard.sqlite`). Com 3 hunts ou mais ele escolhe o tamanho médio de pull que melhor explica o seu dano real e aplica um fator de correção; o cartão passa a mostrar "calibrado com N hunts". O app também acompanha a **mana média** de cada membro durante a hunt; quando ela fica abaixo de 25%, as sugestões que gastam mais mana vêm com um aviso, porque essa mana extra sai de poção (mais supplies) ou a skill falha. Limitações: não há dano por skill (só o total da party), o ataque da arma pode não vir nos dados (assume 40) e itens, buffs e resistências extras do jogo não entram no modelo.
+### Cartão de cada conta
 
-**Presets de batalha.** O botão **Presets** do dashboard abre a biblioteca local de configurações de batalha: skills em ordem de prioridade, mínimo de criaturas por skill, curas, poção de mana, suportes e munição. **Salvar** guarda a configuração atual de um personagem com o nome da hunt (por exemplo "Dragon Lair · Druid"; repetições ganham "(2)"). Cada preset vira um texto compacto (`tbp1.…`, com checksum) que você copia para outro Mac ou cola em **Importar**; o conteúdo importado é higienizado e validado. **Ver passos** mostra as diferenças para a config atual da conta escolhida, avisos (skill de outra vocação ou level maior) e o passo a passo para reproduzir no jogo. O app **não aplica** nada no jogo: ele só lê a configuração. Salvar, importar, renomear e excluir só funcionam abrindo o dashboard neste Mac (`localhost`); pela rede local a biblioteca fica somente leitura. Os presets ficam em `dashboard.sqlite`. A configuração é lida quando o jogo conecta; se você mudar no jogo, recarregue a aba antes de salvar.
+Status (caçando, na cidade, desconectada), XP/h, lucro/h, tempo, kills/h, balance, supplies/h, dano recebido e lucro por kill, monstros mais abatidos, chaves e mochila, e a party com HP/mana e a parte dos supplies de cada membro. Os botões do cartão abrem o **painel da conta** e já mostram o resumo de cada aba.
 
-**Notificações.** O app avisa pelo macOS quando algo novo entra no painel de atenção (missão pronta, sequência em risco, login a resgatar, invasão, mochila/chaves cheias, hunt que acabou mal). Liga e desliga em **Dashboard → Notificar eventos importantes**. É local: nada sai do Mac. Só funciona no `.app` instalado, não no `swift run`.
+### Painel da conta
 
-**Missões diárias.** Cada missão de monstro lista os mapas que têm o monstro-alvo, usando a lista pública de hunts do jogo (`https://play.tibidle.com/hunts`), a mesma que o jogo usa no botão "Explorar". O app baixa essa lista sozinho, sem cookies nem login, guarda uma cópia em `hunts-catalog.json` e atualiza a cada 12 horas. Estados exibidos: *Contando nesta hunt*, *A hunt atual não conta*, *Pendente*, *Concluída — resgate no jogo*, *Resgatada*, além de *Elite* e *Forja* (que não dependem de hunt). A regra "esta hunt conta" é inferida dos monstros do mapa; o app não consegue confirmar as regras do servidor.
+- **Hunt:** a melhor hunt recente da conta nesse mapa (lucro/h de lá e de agora, o que mudou no setup de batalha, supplies por membro, botão para ver o setup completo e salvar como preset); o histórico das contas nesse mapa no nível atual ±2, para separar "é o nível" de "é o setup"; o bestiário do mapa com os marcos e o tempo até cada um; kills e drops.
+- **Nível:** XP que falta, tempo no ritmo atual e, nas hunts feitas perto desse nível, XP/h, lucro/h e o gold ganho ou gasto até subir.
+- **Skills:** dano estimado de cada skill contra os monstros da hunt, avisos de elemento resistido e sugestões de troca com o ganho e o custo de mana (veja [Análise de skills](#análise-de-skills)).
+- **Equipamento:** o dano recebido medido golpe a golpe, as melhorias de equipamento e o equipamento completo da party (veja [Conselheiro de equipamento](#conselheiro-de-equipamento)).
+- **Missões:** as missões diárias, a previsão de quando cada uma conclui, se a hunt atual conta e a hunt sugerida; a sequência e as metas semanais.
 
-**Como os dados são coletados.** Um script somente leitura (`Sources/TibidleCore/CollectorScript.swift`) roda apenas em `play.tibidle.com` e observa as mensagens que o jogo **recebe** do servidor pelo WebSocket. Ele não envia nada ao jogo, não toca nas mensagens enviadas (onde trafega a autenticação) e repassa ao app só uma lista fixa de campos de hunt, das duas missões diárias e do horário da invasão do dia (se você está inscrito, sem prêmios) (sem calendário de login nem prêmios além do nome e da quantidade; da sequência e das metas semanais só os números de progresso); do **equipamento** de cada membro da party, por slot, só o nome do item, os números dele (armor, defense, attack, bônus, tier) e os nomes dos campos, nunca ids; dos **golpes que a party recebe** (eventos `mhit` e `mcast`), só a soma por criatura (pelo nome) e por elemento, nunca os ids das criaturas; das skills, os níveis e os demais números do magic level (para saber se o bônus dos itens já está incluído); o resto, inclusive o token de sessão, é descartado. Os testes em `Tests/TibidleCoreTests/DashboardTests.swift` executam esse script e verificam isso.
+### Comparações e histórico
 
-**Versão nova.** Uma vez por dia o app consulta a última release em `api.github.com` (sem cookies nem login) e, se houver uma versão mais nova, mostra um link no topo da dashboard. Ele não baixa nem instala nada.
+- **Mesma hunt, lado a lado:** quando duas ou mais contas caçam no mesmo mapa, compara lucro, loot, supplies, XP, kills, dano causado e recebido, cura e as razões por kill e por XP; fica em vermelho o que está 20% ou mais pior que a melhor conta.
+- **Ranking de hunts** por mapa: XP/h, lucro/h, kills/h, dano recebido/h, supplies/h e mortes, por conta ou todas, ordenado por lucro, XP, kills, menos dano ou menos supplies. Nas hunts com golpes medidos, a dica da coluna de dano mostra quanto foi dreno de vida.
+- **Gráficos:** XP/h e lucro/h nas últimas 1 h a 7 dias, e lucro por nível em cada mapa (um ponto por hunt), com tabela.
+- **Totais por dia** e **hunts encerradas** (duração, motivo, level, XP, loot, supplies, mortes). Clicar numa hunt mostra os detalhes e o setup de batalha com que ela rodou, comparado a outra hunt.
+- **CSV** do histórico de hunts e das amostras por minuto.
 
-**Privacidade.** A dashboard não tem senha e, pela rede, é somente leitura (a única escrita é a biblioteca de presets, aceita só de `localhost`): **qualquer pessoa na mesma rede** pode ver os dados de hunt (nomes dos personagens, levels, XP, gold). Ela não expõe logins nem cookies e não permite ações no jogo; os presets podem ser lidos (inclusive o texto deles) por quem estiver na rede. Use em redes de confiança.
+### Análise de skills
 
-**Limitações.** Os dados só são registrados com o app aberto (o período fechado aparece como "progresso offline", sem detalhes). Se o jogo mudar o formato das mensagens, a coleta pode parar até ser ajustada. O histórico (amostras por minuto, guardadas por 30 dias, e hunts encerradas) fica em `dashboard.sqlite`.
+O app combina as skills equipadas e os níveis de cada personagem (nível treinado mais o bônus de itens e bestiário), as fórmulas e elementos das magias (`https://play.tibidle.com/spells`) e as resistências de cada monstro abatido (`/bestiary/creature`, guardadas em `creatures-cache.json`). Com isso simula a rotação da party (a primeira skill da prioridade que está pronta e atende ao mínimo de criaturas) e estima o dano por segundo.
 
-Para ver a página com dados de exemplo, sem abrir o jogo: `swift run DashboardPreview preview.png` (opções `light` e `phone`).
+O dano é uma **estimativa**, porque o app não conhece as regras internas do servidor. Ele aprende com as suas hunts: ao fim de cada hunt iniciada com o app aberto, compara o dano previsto com o real e, com 3 hunts ou mais, aplica um fator de correção ("calibrado com N hunts"). Quando a mana média de um membro fica abaixo de 25%, as sugestões que gastam mais mana vêm com um aviso. Limitações: o jogo só informa o dano total da party, o ataque da arma pode não vir nos dados (assume 40) e buffs e resistências extras não entram no modelo.
 
-## Dados das contas
+### Conselheiro de equipamento
+
+**Dano recebido medido.** Golpe a golpe, quanto do dano é corpo a corpo (golpes por segundo, média e máximo), quanto é magia de cada elemento (inclusive veneno, queimadura, sangramento e dreno de vida) e quais criaturas mais machucam. A medição vai também para o resumo de cada hunt.
+
+**Melhorias.** Para quem mais apanha (menor HP média; antes disso, o knight), cada slot de defesa é comparado com o melhor item que suas outras contas usam na mesma vocação (no jogo, item só exige vocação). O ganho é dado em **dano a menos por segundo**, pelas regras de combate da wiki:
+
+- armadura tira em média 0,75 por ponto de cada golpe corpo a corpo;
+- o escudo bloqueia 0,06 × (Escudo/4 + 2,23) × defesa, até 1 golpe por segundo;
+- a proteção física age no golpe inteiro, e também no sangramento e na magia física;
+- a magia só sente a proteção do elemento dela; dreno de vida não tem proteção.
+
+Com 2 min e 20 golpes medidos, a divisão entre corpo a corpo e magia é a real; antes disso, uma divisão típica. A wand ou rod de sorcerer e druid é comparada com o elemento que os monstros da hunt resistem, indicando a de outra conta (ou o elemento) que rende mais. As até 4 trocas de maior impacto aparecem primeiro.
+
+### Presets de batalha
+
+O botão **Presets** abre a biblioteca local de configurações de batalha: skills em ordem de prioridade, mínimo de criaturas, curas, poção de mana, suportes e munição.
+
+- **Salvar** guarda a configuração atual de um personagem com o nome da hunt (por exemplo "Dragon Lair · Druid").
+- Cada preset vira um texto compacto (`tbp1.…`, com checksum) para copiar para outro Mac e colar em **Importar**; o conteúdo importado é higienizado e validado.
+- **Ver passos** mostra as diferenças para a configuração atual de uma conta e o passo a passo para reproduzir no jogo.
+
+O app **não aplica** nada no jogo. Salvar, importar, renomear e excluir só funcionam abrindo a dashboard neste Mac (`localhost`). A configuração é lida quando o jogo conecta; se você mudar no jogo, recarregue a aba antes de salvar.
+
+### Notificações
+
+O app avisa pelo macOS quando algo novo e importante entra no painel de atenção: missão pronta, sequência em risco, login a resgatar, invasão, mochila ou chaves cheias, hunt que acabou mal e hunt em que alguém chegou a menos de 15% da vida. Liga e desliga em **Dashboard → Notificar eventos importantes**. É local e só funciona no `.app` instalado.
+
+## Privacidade e conexões
+
+### Como os dados são coletados
+
+Um script somente leitura (`Sources/TibidleCore/CollectorScript.swift`) roda apenas em `play.tibidle.com` e observa as mensagens que o jogo **recebe** do servidor pelo WebSocket. Ele não envia nada ao jogo e não toca nas mensagens enviadas, onde trafega a autenticação. Ao app ele repassa só uma lista fixa de campos:
+
+- números da hunt (XP, loot, supplies, kills, dano, cura) e o status da party (vida, mana, level, skills com o bônus);
+- as missões diárias, a sequência e as metas semanais (só progresso) e o horário da invasão do dia;
+- do equipamento, por slot, o nome e os números do item e os nomes dos campos, nunca ids;
+- dos golpes que a party recebe (eventos `mhit` e `mcast`), só a soma por criatura (pelo nome) e por elemento, nunca os ids das criaturas.
+
+O resto, inclusive o token de sessão, é descartado. Os testes em `Tests/TibidleCoreTests/DashboardTests.swift` executam esse script e verificam isso.
+
+### Rede local
+
+A dashboard não tem senha e, pela rede, é somente leitura: **qualquer pessoa na mesma rede** pode ver os dados de hunt (nomes dos personagens, levels, XP, gold) e os presets. Ela não expõe logins nem cookies e não permite ações no jogo. A única escrita, a biblioteca de presets, é aceita só de `localhost`. Use em redes de confiança.
+
+### O que o app baixa
+
+Tudo sem cookies nem login, com cópia local para funcionar offline:
+
+| Endereço | Para quê | Frequência |
+| --- | --- | --- |
+| `play.tibidle.com/hunts` | Lista de hunts (missões e hunt sugerida) | a cada 12 h |
+| `play.tibidle.com/spells` | Fórmulas das magias (análise de skills) | a cada 24 h |
+| `play.tibidle.com/hunts/select` | Marcos do bestiário e monstros de cada mapa | a cada 24 h |
+| `play.tibidle.com/bestiary/creature` | Resistências dos monstros abatidos | sob demanda |
+| `api.github.com` (última release) | Aviso de versão nova; não baixa nem instala nada | 1 vez por dia |
+
+### Dados das contas
 
 Os dados ficam fora do repositório e do app:
 
 ```text
-~/Library/Application Support/TibidleMultiManager/settings.json   # nomes, ordem, som e visualização
-~/Library/Application Support/TibidleMultiManager/dashboard.sqlite # histórico da dashboard
-~/Library/Application Support/TibidleMultiManager/hunts-catalog.json # cópia da lista pública de hunts
-~/Library/WebKit/io.github.flvsilva.tibidle-multi-manager/        # cookies e armazenamento dos 4 perfis
+~/Library/Application Support/TibidleMultiManager/settings.json        # nomes, ordem, som e visualização
+~/Library/Application Support/TibidleMultiManager/dashboard.sqlite     # histórico, presets e calibração
+~/Library/Application Support/TibidleMultiManager/*-catalog.json, *-cache.json  # cópias dos dados públicos do jogo
+~/Library/WebKit/io.github.flvsilva.tibidle-multi-manager/             # cookies e armazenamento dos 4 perfis
 ```
 
-Cada conta usa um identificador de perfil fixo (`ProfileIdentity` em `Sources/TibidleCore/Settings.swift`). Renomear ou arrastar uma aba não altera esse identificador nem transfere o login. **Não altere esses UUIDs**, ou os logins existentes deixam de ser encontrados.
+O histórico guarda amostras por minuto por 30 dias e todas as hunts encerradas. Os dados só são registrados com o app aberto; o período fechado aparece como "progresso offline".
 
-O gerenciador não captura senhas. O site mantém a autenticação no perfil, como em um navegador comum. A pasta de perfis é privada e não deve ser compartilhada.
-
-## Desenvolvimento
-
-```sh
-swift build          # compila
-swift test           # configurações, abas, grade, coletor, histórico e servidor
-swift run            # roda sem empacotar (prefira o .app: o bundle ID separa os perfis)
-```
-
-| Arquivo | Responsabilidade |
-| --- | --- |
-| `Sources/TibidleCore/Settings.swift` | Configurações, normalização e identidades dos perfis |
-| `Sources/TibidleCore/TabOrder.swift` | Ordem visual |
-| `Sources/TibidleCore/BrowserLayout.swift` | Tela única e grade |
-| `Sources/TibidleMultiManager/MainWindowController.swift` | Janela, abas, controles |
-| `Sources/TibidleMultiManager/BrowserSession.swift` | `WKWebView`, perfis, popups de login, som |
-| `Sources/TibidleMultiManager/BrowserHostView.swift` | Posicionamento dos painéis |
-| `Sources/TibidleMultiManager/Theme.swift` | Cores, botões e arraste das abas |
-| `Sources/TibidleCore/CollectorScript.swift` | Coletor somente leitura injetado no jogo |
-| `Sources/TibidleCore/DashboardStore.swift` | Estado ao vivo e histórico (SQLite) |
-| `Sources/TibidleCore/DashboardServer.swift`, `DashboardRouter.swift` | Servidor HTTP da rede local |
-| `Sources/TibidleCore/HuntCatalog.swift`, `HuntCatalogLoader.swift`, `MissionAdvisor.swift` | Lista de hunts e avaliação das missões diárias |
-| `Sources/TibidleCore/Attention.swift` | Painel "precisa de atenção" |
-| `Sources/TibidleCore/UpdateChecker.swift` | Aviso de versão nova (GitHub) |
-| `Sources/TibidleCore/DashboardPage.swift` | Página da dashboard |
-| `Sources/TibidleMultiManager/Notifier.swift` | Notificações do macOS |
-| `Sources/DashboardPreview/main.swift` | Pré-visualização com dados de exemplo |
-| `scripts/build-app.sh` | Gera o `.app` e o ZIP |
+O gerenciador não captura senhas: o site mantém a autenticação no perfil, como em um navegador comum. A pasta de perfis é privada e não deve ser compartilhada. Cada conta usa um identificador de perfil fixo (`ProfileIdentity` em `Sources/TibidleCore/Settings.swift`); renomear ou arrastar uma aba não altera esse identificador. **Não altere esses UUIDs**, ou os logins existentes deixam de ser encontrados.
 
 ## Limitações
 
+- **Formato do jogo:** se o jogo mudar o formato das mensagens, a coleta pode parar até ser ajustada.
+- **Estimativas:** dano de skills, ganho de equipamento e previsões de missão são estimativas a partir de dados públicos e das suas hunts; o app não conhece as regras internas do servidor.
 - **Som:** o WebKit não tem API pública para silenciar uma página; o app usa a SPI `_setPageMuted:`. Se uma versão futura do macOS removê-la, o botão de som fica desativado.
 - **Google, Discord ou CAPTCHA:** provedores podem impor restrições a navegadores embutidos. O app se identifica como Safari e abre os popups de login no mesmo perfil da conta, mas não automatiza essas etapas.
 - **Login expirou:** o servidor pode pedir login de novo mesmo com o perfil salvo.
 - **Memória:** são quatro páginas do jogo abertas ao mesmo tempo.
+
+## Desenvolvimento
+
+Requer as Command Line Tools do Xcode (`xcode-select --install`) ou o Xcode.
+
+```sh
+swift build                    # compila
+swift test                     # testes (coletor, histórico, conselheiros, servidor…)
+swift run                      # roda sem empacotar (prefira o .app: o bundle ID separa os perfis)
+swift run DashboardPreview preview.png   # a dashboard com dados de exemplo (opções light e phone)
+./scripts/build-app.sh         # gera dist/Tibidle Multi-Manager.app, o DMG e o ZIP (universal arm64 + x86_64)
+./scripts/release.sh 1.2.3     # publica: com tudo commitado e enviado, roda os testes, gera os pacotes e cria a tag e a release no GitHub
+```
+
+O app é assinado *ad hoc* (sem Developer ID); um pacote baixado da internet precisa ser liberado como em [Baixar e instalar](#baixar-e-instalar).
+
+| Arquivo | Responsabilidade |
+| --- | --- |
+| `Sources/TibidleCore/Settings.swift`, `TabOrder.swift`, `BrowserLayout.swift` | Configurações, identidades dos perfis, ordem e grade |
+| `Sources/TibidleMultiManager/MainWindowController.swift` | Janela, abas, controles |
+| `Sources/TibidleMultiManager/BrowserSession.swift`, `BrowserHostView.swift` | `WKWebView`, perfis, popups de login, som e posicionamento |
+| `Sources/TibidleMultiManager/Theme.swift` | Cores, botões e arraste das abas |
+| `Sources/TibidleMultiManager/Notifier.swift` | Notificações do macOS |
+| `Sources/TibidleCore/CollectorScript.swift` | Coletor somente leitura injetado no jogo |
+| `Sources/TibidleCore/DashboardStore.swift` | Estado ao vivo e histórico (SQLite) |
+| `Sources/TibidleCore/DashboardServer.swift`, `DashboardRouter.swift` | Servidor HTTP da rede local |
+| `Sources/TibidleCore/DashboardPage.swift` | Página da dashboard |
+| `Sources/TibidleCore/Attention.swift` | Painel "precisa de atenção" |
+| `Sources/TibidleCore/HuntInsights.swift` | Comparação com a melhor hunt recente |
+| `Sources/TibidleCore/SkillModel.swift`, `SkillDataLoader.swift` | Análise de skills e calibração |
+| `Sources/TibidleCore/GearAdvisor.swift` | Dano recebido medido e conselheiro de equipamento |
+| `Sources/TibidleCore/HuntCatalog.swift`, `HuntCatalogLoader.swift`, `MissionAdvisor.swift` | Lista de hunts e missões diárias |
+| `Sources/TibidleCore/BestiaryAdvisor.swift`, `InvasionAdvisor.swift` | Bestiário da hunt e invasões |
+| `Sources/TibidleCore/BattlePreset.swift` | Presets de batalha |
+| `Sources/TibidleCore/UpdateChecker.swift` | Aviso de versão nova |
+| `Sources/DashboardPreview/main.swift` | Pré-visualização com dados de exemplo |
+| `scripts/build-app.sh`, `scripts/release.sh` | Pacotes e publicação |
 
 ## Licença e créditos
 
