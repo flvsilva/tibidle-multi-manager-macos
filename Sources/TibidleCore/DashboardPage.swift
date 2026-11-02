@@ -709,7 +709,7 @@ public enum DashboardPage {
     // ---- account cards ----
     function stat(label, value, cls) { return el('div', null, el('small', null, label), el('b', cls ? { class: cls } : null, value)); }
 
-    // Chance of a death in the next hour: the hunt's own 3 s windows of damage against each member's health,
+    // Chance of a death in the next hour: the health each member lost in the hunt's 3 s windows, against what it had,
     // or the map's deaths near this level before there are 10 minutes of them.
     function deathRisk(a) {
       const r = a.deathRisk;
@@ -719,8 +719,8 @@ public enum DashboardPage {
       const m = (r.members || [])[0];
       const note = r.source === 'history'
         ? `pelo histórico do mapa (${r.deaths} mortes em ${r.hours} h)`
-        : `pelo dano dos últimos ${Math.min(20, num(r.minutes))} min${m && p >= 0.01 ? ` · mais exposto: ${vocation(m.vocation)}` : ''}`;
-      const title = m ? `Maior dano em 3 s: ${fmt(m.biggestWindow)} · vida mínima ${fmt(m.lowestHealth)}/${fmt(m.maxHealth)}` : '';
+        : `pela vida perdida nos últimos ${Math.min(20, num(r.minutes))} min${m && p >= 0.01 ? ` · mais exposto: ${vocation(m.vocation)}` : ''}`;
+      const title = m ? `Maior perda de vida em 3 s (já com a cura): ${fmt(m.biggestWindow)} · vida mínima ${fmt(m.lowestHealth)}/${fmt(m.maxHealth)}` : '';
       return el('div', { class: 'madvice', style: { marginTop: '8px' }, title },
         'Risco de morte ', el('b', { class: cls }, `~${pct}%/h`), ` · ${note}`);
     }

@@ -1,20 +1,21 @@
 import Foundation
 
-/// Chance that someone in the party dies, from the hunt's own hits: every posted frame (about 3 s apart) gives,
-/// per party position, the health at the start of the window and the damage taken in it. The largest windows are
+/// Chance that someone in the party dies, from the hunt's own health: every posted frame (about 3 s apart) gives,
+/// per party position, the health at the start of the window and how much of it was lost by the end, healing
+/// included (a knight can take 1600 in 3 s and heal most of it, so the hits alone say too much). The largest are
 /// fitted with an exponential tail (peaks over a threshold), which tells how likely a window bigger than any seen
 /// so far is; the chance that a window outdoes the health the member had at its start, summed over an hour of
 /// windows, is the risk. Before there is enough of the hunt, the map's deaths per hour stand in.
 public struct DeathRisk {
-    struct Window { let date: Date; let health: Double; let damage: Double }
+    struct Window { let date: Date; let health: Double; let lost: Double }
 
     /// The windows weighed: the last 20 minutes, the latest counting most (half-life of 5 minutes).
     static let keep = 20 * 60.0
     static let halfLife = 5 * 60.0
-    /// Enough of the hunt to say something: 10 minutes of windows, some of them with damage.
+    /// Enough of the hunt to say something: 10 minutes of windows, some of them losing health.
     static let minWindows = 200
     static let minHurt = 20
-    /// Windows above this quantile of damage make the tail.
+    /// Windows above this quantile of health lost make the tail.
     static let tailQuantile = 0.9
     /// Above these the hunt is flagged, and notified.
     public static let warnPerHour = 0.05
@@ -43,22 +44,17 @@ public struct DeathRisk {
         covered += seconds
     }
 
-    /// One posted frame: the party as it is now, and the hits tallied since the last one.
-    public mutating func add(party: [[String: Any]], tally: [String: Any]?, at date: Date) {
+    /// One posted frame: the party as it is now. The window since the last frame is the health lost in between.
+    public mutating func add(party: [[String: Any]], at date: Date) {
         let elapsed = last.map { date.timeIntervalSince($0) } ?? 0
         last = date
         // A gap (app paused, reconnect) is not one window: only frames about 3 s apart count.
-        if elapsed > 0, elapsed <= 10, let tally {
-            let melee = HuntInsights.number((tally["melee"] as? [String: Any])?["amount"]) ?? 0
-            let spells = (tally["members"] as? [String: Any]) ?? [:]
-            for (position, start) in health {
-                let magic = (spells[String(position)] as? [String: Any])?.values.reduce(0) { $0 + (HuntInsights.number($1) ?? 0) } ?? 0
-                let damage = magic + (position == 0 ? melee : 0)
-                windows[position, default: []].append(Window(date: date, health: start, damage: damage))
-            }
-        }
+        let counts = elapsed > 0 && elapsed <= 10
         for (position, member) in party.enumerated() {
             guard let hp = HuntInsights.number(member["hp"]), let maxHp = HuntInsights.number(member["maxHp"]), maxHp > 0 else { continue }
+            if counts, let start = health[position] {
+                windows[position, default: []].append(Window(date: date, health: start, lost: max(0, start - hp)))
+            }
             health[position] = hp
             maxHealth[position] = maxHp
             vocations[position] = member["vocation"] as? String
@@ -66,12 +62,12 @@ public struct DeathRisk {
         for position in windows.keys { windows[position]?.removeAll { date.timeIntervalSince($0.date) > Self.keep } }
     }
 
-    /// Chance, per window, that the damage is at least `x`: the measured share below the threshold, the fitted
+    /// Chance, per window, that the health lost is at least `x`: the measured share below the threshold, the fitted
     /// exponential tail above it. Nil until there are enough windows.
     static func exceeds(_ windows: [Window], now: Date) -> ((Double) -> Double)? {
-        guard windows.count >= minWindows, windows.filter({ $0.damage > 0 }).count >= minHurt else { return nil }
+        guard windows.count >= minWindows, windows.filter({ $0.lost > 0 }).count >= minHurt else { return nil }
         // Damage sorted with its weight, and the weight from each one up: "at least x" is one binary search.
-        let weighed = windows.map { ($0.damage, pow(0.5, now.timeIntervalSince($0.date) / halfLife)) }.sorted { $0.0 < $1.0 }
+        let weighed = windows.map { ($0.lost, pow(0.5, now.timeIntervalSince($0.date) / halfLife)) }.sorted { $0.0 < $1.0 }
         var from = [Double](repeating: 0, count: weighed.count + 1)
         for i in stride(from: weighed.count - 1, through: 0, by: -1) { from[i] = from[i + 1] + weighed[i].1 }
         let total = from[0]
@@ -110,7 +106,7 @@ public struct DeathRisk {
             rate += perHour
             let lowest = list.map(\.health).min() ?? 0
             members.append(["position": position, "vocation": vocations[position] ?? "", "perHour": 1 - exp(-perHour),
-                            "biggestWindow": Int(list.map(\.damage).max() ?? 0), "lowestHealth": Int(lowest),
+                            "biggestWindow": Int(list.map(\.lost).max() ?? 0), "lowestHealth": Int(lowest),
                             "maxHealth": Int(maxHealth[position] ?? 0)])
         }
         guard !members.isEmpty else { return nil }

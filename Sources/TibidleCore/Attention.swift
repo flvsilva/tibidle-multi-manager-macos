@@ -152,10 +152,10 @@ public enum Attention {
         let level = chance >= DeathRisk.alertPerHour ? "bad" : "warn"
         var detail = ""
         if let top = (risk["members"] as? [[String: Any]])?.first {
-            detail = " Mais exposto: \(vocationName(top["vocation"])) — em 3 s chegou a levar \(Int(number(top["biggestWindow"]))) de dano, com vida mínima de \(Int(number(top["lowestHealth"])))/\(Int(number(top["maxHealth"])))."
+            detail = " Mais exposto: \(vocationName(top["vocation"])) — em 3 s chegou a perder \(Int(number(top["biggestWindow"]))) de vida, com vida mínima de \(Int(number(top["lowestHealth"])))/\(Int(number(top["maxHealth"])))."
         }
         return AttentionItem(key: "deathrisk|\(i)|\(hunt)|\(level)", account: i, kind: "risk", level: level,
-                             text: "\(label): risco de morte ~\(percent)%/h pelo dano desta hunt.\(detail)", notify: level == "bad")
+                             text: "\(label): risco de morte ~\(percent)%/h pela vida perdida nesta hunt.\(detail)", notify: level == "bad")
     }
 
     /// A sorcerer's wand or druid's rod of an element the hunt's monsters resist (from the gear advice).

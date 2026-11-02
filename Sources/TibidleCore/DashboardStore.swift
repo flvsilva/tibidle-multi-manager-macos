@@ -157,9 +157,8 @@ public final class DashboardStore {
             }
             if type == "resume" { modeled[account] = nil; vitals[account] = VitalsTracker(); hits[account] = HitsTracker(); risk[account] = DeathRisk() }
             if let tally = data["hits"] as? [String: Any] { hits[account, default: HitsTracker()].add(tally, at: date) }
-            // A posted frame without hits is a window without damage.
             if type == "frame", let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] {
-                risk[account, default: DeathRisk()].add(party: party, tally: data["hits"] as? [String: Any] ?? [:], at: date)
+                risk[account, default: DeathRisk()].add(party: party, at: date)
                 risk[account]?.accrue(now: date)
             }
             if let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] { vitals[account, default: VitalsTracker()].add(party: party) }

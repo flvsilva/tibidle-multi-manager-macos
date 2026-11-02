@@ -52,15 +52,15 @@ Status (caçando, na cidade, desconectada), XP/h, lucro/h, tempo, kills/h, balan
 
 #### Risco de morte
 
-A chance de alguém da party morrer na próxima hora, em `~X%/h`. É uma previsão, calculada com o dano real da hunt:
+A chance de alguém da party morrer na próxima hora, em `~X%/h`. É uma previsão, calculada com a vida real da party durante a hunt:
 
-- a cada quadro (cerca de 3 s), o app guarda, por membro, a vida no começo da janela e o dano recebido nela;
-- os 10% maiores danos dos últimos 20 minutos (os mais recentes pesam mais) ganham uma cauda exponencial, que estima a chance de uma janela pior do que qualquer uma já vista;
+- a cada quadro (cerca de 3 s), o app guarda, por membro, a vida no começo da janela e quanto dela foi perdido até o fim, já descontada a cura (um knight pode levar 1600 em 3 s e curar quase tudo);
+- as 10% maiores perdas dos últimos 20 minutos (os mais recentes pesam mais) ganham uma cauda exponencial, que estima a chance de uma janela pior do que qualquer uma já vista;
 - a chance de uma janela levar mais do que a vida que o membro tinha, somada por uma hora de janelas, é o risco. Quedas de vida contam onde aconteceram;
 - nos primeiros 10 minutos, o número vem do **histórico do mapa** perto do nível (mortes por hora de todas as contas, puxado para a média geral quando há poucas horas);
 - cada hunt encerrada guarda o que a previsão esperava; depois de 10 hunts, a razão entre mortes vistas e previstas corrige o número (entre ¼ e 4×).
 
-Acima de 5%/h o número fica amarelo e entra no painel de atenção; acima de 10%/h fica vermelho e gera notificação. O dano medido vem dos golpes corpo a corpo no knight e das magias em cada membro, então cura e regeneração entram só pela vida no começo de cada janela.
+Acima de 5%/h o número fica amarelo e entra no painel de atenção; acima de 10%/h fica vermelho e gera notificação. A vida é lida a cada 3 s, então uma queda e uma cura dentro da mesma janela não aparecem: o risco de um golpe que mata mais rápido que isso fica subestimado.
 
 ### Painel da conta
 
