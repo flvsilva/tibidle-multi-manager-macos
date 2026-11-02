@@ -313,6 +313,17 @@ final class InsightsTests: XCTestCase {
         store.ingest(account: account, json: #"{"type":"ended","data":{"summary":{"huntId":\#(map),"reason":"\#(reason)","elapsedSec":\#(seconds),"xp":"\#(xp)","lootGold":1,"suppliesGold":1,"killsTotal":\#(seconds / 10),"balance":\#(balance),"deaths":\#(deaths)}}}"#)
     }
 
+    func testRankingComparesDamageTakenSuppliesAndLifeDrain() {
+        let store = makeStore()
+        store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":10,"reason":"stop","elapsedSec":3600,"damageTaken":9000,"suppliesGold":2000,"hits":{"elements":{"COMBAT_LIFEDRAIN":0.6}}}}}"#)
+        store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":10,"reason":"stop","elapsedSec":3600,"damageTaken":3000,"suppliesGold":1000}}}"#)
+        let row = (object(store.rankingJSON())["rows"] as! [[String: Any]]).first { $0["account"] is NSNull }!
+        XCTAssertEqual(row["damageTakenPerHour"] as? Int, 6000)
+        XCTAssertEqual(row["suppliesPerHour"] as? Int, 1500)
+        // Only the measured hunt says how much was life drain.
+        XCTAssertEqual(row["lifeDrainShare"] as! Double, 0.6, accuracy: 0.001)
+    }
+
     func testRankingAggregatesRunsPerMapAndIgnoresShortOnes() {
         let store = makeStore()
         end(store, map: 10, seconds: 3600, xp: 1000, balance: 500)

@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var server: DashboardServer?
     private var catalogLoader: HuntCatalogLoader?
     private var skillLoader: SkillDataLoader?
+    private var updateChecker: UpdateChecker?
     private var notifier: Notifier?
     private var notifyItem: NSMenuItem?
 
@@ -19,6 +20,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let skills = SkillDataLoader(directory: root, store: dashboard)
         skills.start()
         skillLoader = skills
+        if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+            let checker = UpdateChecker(current: version, store: dashboard)
+            checker.start()
+            updateChecker = checker
+        }
         let controller = MainWindowController(store: SettingsStore(root: root), dashboard: dashboard)
         self.controller = controller
         let server = DashboardServer(store: dashboard)
@@ -59,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server?.stop()
         catalogLoader?.stop()
         skillLoader?.stop()
+        updateChecker?.stop()
     }
 
     @objc private func selectPosition(_ sender: NSMenuItem) { controller?.selectPosition(sender.tag) }

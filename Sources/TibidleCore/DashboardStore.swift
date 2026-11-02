@@ -15,6 +15,7 @@ public final class DashboardStore {
     private var live: [[String: Any]]
     private var lastSample: [Int: Date] = [:]
     private var names: [String]
+    private var update: [String: String]?
     private var catalog = HuntCatalog.empty
     private var spells = SpellCatalog.empty
     private var creatures = CreatureCatalog()
@@ -90,6 +91,11 @@ public final class DashboardStore {
 
     public func setHuntCatalog(_ catalog: HuntCatalog) {
         queue.sync { self.catalog = catalog }
+    }
+
+    /// A newer release than the running app (nil when up to date), shown in the dashboard header.
+    public func setUpdate(_ release: (version: String, url: String)?) {
+        queue.sync { update = release.map { ["version": $0.version, "url": $0.url] } }
     }
 
     public func setAccountNames(_ names: [String]) {
@@ -261,8 +267,10 @@ public final class DashboardStore {
         queue.sync {
             let accounts = buildAccounts()
             let nowMs = now().timeIntervalSince1970 * 1000
-            return json(["generatedAt": nowMs, "accounts": accounts,
-                         "attention": Attention.evaluate(accounts: accounts, now: nowMs).map(\.json)])
+            var state: [String: Any] = ["generatedAt": nowMs, "accounts": accounts,
+                                        "attention": Attention.evaluate(accounts: accounts, now: nowMs).map(\.json)]
+            if let update { state["update"] = update }
+            return json(state)
         }
     }
 
@@ -496,7 +504,9 @@ extension DashboardStore {
     /// Yield per map, overall (`account: null`) and per account, from finished hunts.
     public func rankingJSON() -> Data {
         queue.sync {
-            struct Total { var runs = 0, seconds = 0.0, xp = 0.0, balance = 0.0, kills = 0.0, deaths = 0.0 }
+            struct Total { var runs = 0, seconds = 0.0, xp = 0.0, balance = 0.0, kills = 0.0, deaths = 0.0, taken = 0.0, supplies = 0.0
+                           // Damage of the hunts whose hits were measured, and the life drain in it (no item protects from it).
+                           var measured = 0.0, drain = 0.0 }
             var totals: [String: (account: Int?, huntId: Int, total: Total)] = [:]
             for run in allRuns() {
                 let seconds = number(run.summary["elapsedSec"]) ?? 0
@@ -510,6 +520,13 @@ extension DashboardStore {
                     item.total.balance += number(run.summary["balance"]) ?? 0
                     item.total.kills += number(run.summary["killsTotal"]) ?? 0
                     item.total.deaths += number(run.summary["deaths"]) ?? 0
+                    let taken = number(run.summary["damageTaken"]) ?? 0
+                    item.total.taken += taken
+                    item.total.supplies += number(run.summary["suppliesGold"]) ?? 0
+                    if let elements = (run.summary["hits"] as? [String: Any])?["elements"] as? [String: Any] {
+                        item.total.measured += taken
+                        item.total.drain += taken * (number(elements["COMBAT_LIFEDRAIN"]) ?? 0)
+                    }
                     totals[key] = item
                 }
             }
@@ -519,9 +536,11 @@ extension DashboardStore {
                     "huntId": item.huntId, "runs": item.total.runs, "hours": (hours * 100).rounded() / 100,
                     "xpPerHour": Int((item.total.xp / hours).rounded()), "profitPerHour": Int((item.total.balance / hours).rounded()),
                     "killsPerHour": Int((item.total.kills / hours).rounded()), "deaths": Int(item.total.deaths),
+                    "damageTakenPerHour": Int((item.total.taken / hours).rounded()), "suppliesPerHour": Int((item.total.supplies / hours).rounded()),
                     "title": catalog.hunt(id: item.huntId)?.title ?? (item.huntId == 1 ? "Tower" : "#\(item.huntId)"),
                 ]
                 row["account"] = item.account ?? NSNull()
+                if item.total.measured > 0 { row["lifeDrainShare"] = item.total.drain / item.total.measured }
                 return row
             }.sorted { ($0["profitPerHour"] as? Int ?? 0) > ($1["profitPerHour"] as? Int ?? 0) }
             return json(["minMinutes": Int(Self.minRankedSeconds / 60), "rows": rows])

@@ -91,6 +91,8 @@ public enum DashboardPage {
     .summary > div { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; min-width: 0; }
     .summary small { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
     .summary b { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .update { font-size: 12px; color: var(--s0); text-decoration: none; border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
+    .update:hover { text-decoration: underline; }
     .attention { margin-bottom: 14px; display: grid; gap: 6px; }
     .attention .item { display: flex; gap: 8px; align-items: baseline; background: var(--surface); border: 1px solid var(--border);
       border-left: 4px solid var(--axis); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
@@ -223,6 +225,7 @@ public enum DashboardPage {
       <header>
         <h1><span>Tibidle</span> Hunts</h1>
         <span class="meta" id="meta">Conectando…</span>
+        <a class="update" id="update" target="_blank" rel="noopener" hidden></a>
         <button class="theme" id="presets-open" type="button">Presets</button>
         <button class="theme" id="theme" type="button">Tema</button>
       </header>
@@ -276,6 +279,7 @@ public enum DashboardPage {
           <select id="rank-account" aria-label="Conta"></select>
           <select id="rank-sort" aria-label="Ordenar por">
             <option value="profitPerHour">Lucro/h</option><option value="xpPerHour">XP/h</option><option value="killsPerHour">Kills/h</option>
+            <option value="-damageTakenPerHour">Menos dano recebido</option><option value="-suppliesPerHour">Menos supplies</option>
           </select>
         </div>
         <div class="table-wrap" id="ranking"></div>
@@ -909,6 +913,9 @@ public enum DashboardPage {
         $('cards').replaceChildren(...data.accounts.map(card));
         renderCompare(data.accounts);
         $('meta').textContent = `Atualizado às ${new Date(data.generatedAt).toLocaleTimeString('pt-BR')}`;
+        const update = $('update');
+        update.hidden = !data.update;
+        if (data.update) { update.textContent = `Versão ${data.update.version} disponível`; update.href = data.update.url; }
         renderLegend();
         renderPanel();
       } catch (_) {
@@ -1308,17 +1315,21 @@ public enum DashboardPage {
     let rankingData = null;
     function renderRanking() {
       if (!rankingData) return;
-      const account = $('rank-account').value, sort = $('rank-sort').value;
+      // A leading "-" sorts lowest first (damage and supplies: less is better).
+      const account = $('rank-account').value, sort = $('rank-sort').value.replace(/^-/, ''), dir = $('rank-sort').value.startsWith('-') ? -1 : 1;
       const rows = rankingData.rows.filter((r) => String(r.account === null ? 'all' : r.account) === account)
-        .sort((a, b) => b[sort] - a[sort]);
+        .sort((a, b) => dir * (num(b[sort]) - num(a[sort])));
       if (!rows.length) { $('ranking').replaceChildren(el('div', { class: 'empty' }, `Ainda sem hunts de ${rankingData.minMinutes}+ min para comparar.`)); return; }
       $('ranking').replaceChildren(el('table', null,
         el('thead', null, el('tr', null, el('th', null, '#'), el('th', null, 'Hunt'),
-          ['Hunts', 'Horas', 'XP/h', 'Lucro/h', 'Kills/h', 'Mortes'].map((h) => el('th', { class: 'n' }, h)))),
+          ['Hunts', 'Horas', 'XP/h', 'Lucro/h', 'Kills/h', 'Recebido/h', 'Supplies/h', 'Mortes'].map((h) => el('th', { class: 'n' }, h)))),
         el('tbody', null, rows.slice(0, 30).map((r, i) => el('tr', null, el('td', null, String(i + 1)), el('td', null, r.title),
           el('td', { class: 'n' }, fmt(r.runs)), el('td', { class: 'n' }, r.hours.toFixed(1)), el('td', { class: 'n' }, fmt(r.xpPerHour)),
           el('td', { class: 'n ' + (r.profitPerHour >= 0 ? 'pos' : 'neg') }, signed(r.profitPerHour)),
-          el('td', { class: 'n' }, fmt(r.killsPerHour)), el('td', { class: 'n' }, fmt(r.deaths)))))));
+          el('td', { class: 'n' }, fmt(r.killsPerHour)),
+          el('td', { class: 'n', title: r.lifeDrainShare != null ? `${pct(r.lifeDrainShare)} é dreno de vida, que nenhum item protege (nas hunts medidas)` : '' },
+            fmt(r.damageTakenPerHour)),
+          el('td', { class: 'n' }, fmt(r.suppliesPerHour)), el('td', { class: 'n' }, fmt(r.deaths)))))));
     }
     async function refreshRanking() {
       try {

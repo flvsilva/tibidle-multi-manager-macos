@@ -21,6 +21,10 @@ public enum Attention {
     static let weakElement = 0.5
     /// A member averaging less mana than this spends the hunt unable to cast (or drinking potions).
     static let starvedMana = 0.10
+    /// Lowest health this hunt below which the hunt is risky, and below which it nearly killed someone.
+    static let lowHealth = 0.30, criticalHealth = 0.15
+    /// A single melee hit taking this share of the knight's health.
+    static let bigHit = 0.35
     static let elements = ["COMBAT_PHYSICALDAMAGE": "físico", "COMBAT_FIREDAMAGE": "fogo", "COMBAT_ENERGYDAMAGE": "energia",
                            "COMBAT_EARTHDAMAGE": "terra", "COMBAT_ICEDAMAGE": "gelo", "COMBAT_HOLYDAMAGE": "sagrado", "COMBAT_DEATHDAMAGE": "morte"]
     static let badReasons: [String: (String, String)] = [
@@ -78,6 +82,7 @@ public enum Attention {
                                            notify: true))
             }
             if status == "hunting" { items += skillItems(entry, account: i, label: label) }
+            if status == "hunting", let risk = riskItem(entry, account: i, label: label) { items.append(risk) }
             if status != "hunting", let summary = entry["lastSummary"] as? [String: Any],
                let reason = summary["reason"] as? String, let (level, what) = badReasons[reason] {
                 let endedAt = number(summary["endedAt"])
@@ -98,6 +103,34 @@ public enum Attention {
         }
         let order = ["bad": 0, "warn": 1, "info": 2]
         return items.sorted { (order[$0.level] ?? 3, $0.account) < (order[$1.level] ?? 3, $1.account) }
+    }
+
+    /// The party nearly died this hunt, or a single melee hit takes a big bite of the knight: says who hurts most.
+    static func riskItem(_ entry: [String: Any], account i: Int, label: String) -> AttentionItem? {
+        let party = (entry["state"] as? [String: Any])?["party"] as? [[String: Any]] ?? []
+        let creatures = (entry["hits"] as? [String: Any])?["creatures"] as? [[String: Any]] ?? []
+        let hunt = entry["huntId"].map { "\($0)" } ?? ""
+        var parts: [String] = [], level = "warn"
+        if let lowest = party.compactMap({ m in (m["hpLowest"] as? Double).map { (m, $0) } }).min(by: { $0.1 < $1.1 }), lowest.1 < lowHealth {
+            if lowest.1 < criticalHealth { level = "bad" }
+            parts.append("o \(vocationName(lowest.0["vocation"])) chegou a \(Int((lowest.1 * 100).rounded()))% da vida nesta hunt")
+        }
+        if let knight = party.first(where: { ($0["vocation"] as? String)?.uppercased().contains("KNIGHT") == true }),
+           let maxHp = knight["maxHp"] as? Double ?? (knight["maxHp"] as? Int).map(Double.init), maxHp > 0,
+           let top = creatures.max(by: { number($0["meleeMax"]) < number($1["meleeMax"]) }), number(top["meleeMax"]) / maxHp >= bigHit {
+            parts.append("\(top["name"] as? String ?? "?") acerta até \(Int(number(top["meleeMax"]))) no Knight (\(Int((number(top["meleeMax"]) / maxHp * 100).rounded()))% da vida)")
+        }
+        guard !parts.isEmpty else { return nil }
+        if parts.count == 1, let worst = creatures.first, let name = worst["name"] as? String, name != "?" {
+            parts.append("quem mais machuca é \(name) (\(Int((number(worst["share"]) * 100).rounded()))% do dano)")
+        }
+        return AttentionItem(key: "risk|\(i)|\(hunt)|\(level)", account: i, kind: "risk", level: level,
+                             text: "\(label): \(parts.joined(separator: "; ")).", notify: level == "bad")
+    }
+
+    private static func vocationName(_ vocation: Any?) -> String {
+        let v = SkillAdvisor.baseVocation(vocation as? String ?? "")
+        return v.prefix(1).uppercased() + v.dropFirst().lowercased()
     }
 
     /// From the skill analysis: spells the monsters resist that still fire, and members out of mana.

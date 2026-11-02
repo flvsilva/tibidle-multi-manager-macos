@@ -86,6 +86,9 @@ public enum CollectorScript {
           magic: num(isObject(sk.magic) ? sk.magic.value : undefined),
           shielding: num(isObject(sk.shielding) ? sk.shielding.value : undefined),
         };
+        // The other numbers of the magic skill (base, bonus…): whether `value` already counts the items' magic level.
+        if (isObject(sk.magic)) out.magicDetail = Object.fromEntries(Object.entries(sk.magic)
+          .filter(([k, v]) => typeof v === 'number' && k !== 'value' && !ID.test(k)).slice(0, 8).map(([k, v]) => [k.slice(0, 24), v]));
         out.weaponAttack = weaponAttack(m.equipment);
         out.gear = gear(m.equipment);
         out.kit = Array.isArray(m.kit) ? m.kit.slice(0, 24).map((k) => pick(k, ['name', 'mana', 'cooldownMs'])) : [];
