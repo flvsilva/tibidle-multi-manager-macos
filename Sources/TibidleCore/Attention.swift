@@ -84,6 +84,7 @@ public enum Attention {
             if status == "hunting" { items += skillItems(entry, account: i, label: label) }
             if status == "hunting", let risk = riskItem(entry, account: i, label: label) { items.append(risk) }
             if status == "hunting" { items += weaponItems(entry, account: i, label: label) }
+            if status == "hunting", let risk = deathRiskItem(entry, account: i, label: label) { items.append(risk) }
             if status != "hunting", let summary = entry["lastSummary"] as? [String: Any],
                let reason = summary["reason"] as? String, let (level, what) = badReasons[reason] {
                 let endedAt = number(summary["endedAt"])
@@ -133,6 +134,28 @@ public enum Attention {
         }
         return AttentionItem(key: "risk|\(i)|\(hunt)|\(level)", account: i, kind: "risk", level: level,
                              text: "\(label): \(parts.joined(separator: "; ")).", notify: level == "bad")
+    }
+
+    /// The chance of a death in the next hour: from the hunt's own damage, warned at 5% and notified at 10%; from
+    /// the map's history (the first minutes), only warned at 10%, since it is not this party's damage yet.
+    static func deathRiskItem(_ entry: [String: Any], account i: Int, label: String) -> AttentionItem? {
+        guard let risk = entry["deathRisk"] as? [String: Any], let chance = risk["perHour"] as? Double else { return nil }
+        let hunt = entry["huntId"].map { "\($0)" } ?? ""
+        let percent = chance >= 0.995 ? ">99" : "\(Int((chance * 100).rounded()))"
+        if risk["source"] as? String == "history" {
+            guard chance >= DeathRisk.alertPerHour else { return nil }
+            return AttentionItem(key: "deathrisk|\(i)|\(hunt)|history", account: i, kind: "risk", level: "warn",
+                                 text: "\(label): risco de morte ~\(percent)%/h pelo histórico deste mapa (\(risk["deaths"] ?? 0) mortes em \(risk["hours"] ?? 0) h).",
+                                 notify: false)
+        }
+        guard chance >= DeathRisk.warnPerHour else { return nil }
+        let level = chance >= DeathRisk.alertPerHour ? "bad" : "warn"
+        var detail = ""
+        if let top = (risk["members"] as? [[String: Any]])?.first {
+            detail = " Mais exposto: \(vocationName(top["vocation"])) — em 3 s chegou a levar \(Int(number(top["biggestWindow"]))) de dano, com vida mínima de \(Int(number(top["lowestHealth"])))/\(Int(number(top["maxHealth"])))."
+        }
+        return AttentionItem(key: "deathrisk|\(i)|\(hunt)|\(level)", account: i, kind: "risk", level: level,
+                             text: "\(label): risco de morte ~\(percent)%/h pelo dano desta hunt.\(detail)", notify: level == "bad")
     }
 
     /// A sorcerer's wand or druid's rod of an element the hunt's monsters resist (from the gear advice).

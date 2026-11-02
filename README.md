@@ -43,11 +43,24 @@ Abra em **Dashboard → Abrir dashboard** ou, de outro aparelho na mesma rede (c
   - invasão com inscrição aberta sem você ter entrado, ou começando em até 15 min;
   - lucro 20% abaixo da sua melhor hunt recente no mapa, com o setup mudado;
   - skill, wand ou rod de um elemento que os monstros resistem (menos de 50% do dano), com a arma que rende mais; membro com menos de 10% de mana em média;
-  - **hunt arriscada:** alguém chegou a menos de 30% da vida, ou um golpe corpo a corpo leva 35% ou mais da vida do knight, com a criatura que mais machuca.
+  - **hunt arriscada:** alguém chegou a menos de 30% da vida, ou um golpe corpo a corpo leva 35% ou mais da vida do knight, com a criatura que mais machuca;
+  - **risco de morte** de 5%/h ou mais (veja abaixo), com o membro mais exposto.
 
 ### Cartão de cada conta
 
-Status (caçando, na cidade, desconectada), XP/h, lucro/h, tempo, kills/h, balance, supplies/h, dano recebido e lucro por kill, monstros mais abatidos, chaves e mochila, e a party com HP/mana e a parte dos supplies de cada membro. Os botões do cartão abrem o **painel da conta** e já mostram o resumo de cada aba.
+Status (caçando, na cidade, desconectada), XP/h, lucro/h, tempo, kills/h, balance, supplies/h, dano recebido e lucro por kill, monstros mais abatidos, **risco de morte**, chaves e mochila, e a party com HP/mana e a parte dos supplies de cada membro. Os botões do cartão abrem o **painel da conta** e já mostram o resumo de cada aba.
+
+#### Risco de morte
+
+A chance de alguém da party morrer na próxima hora, em `~X%/h`. É uma previsão, calculada com o dano real da hunt:
+
+- a cada quadro (cerca de 3 s), o app guarda, por membro, a vida no começo da janela e o dano recebido nela;
+- os 10% maiores danos dos últimos 20 minutos (os mais recentes pesam mais) ganham uma cauda exponencial, que estima a chance de uma janela pior do que qualquer uma já vista;
+- a chance de uma janela levar mais do que a vida que o membro tinha, somada por uma hora de janelas, é o risco. Quedas de vida contam onde aconteceram;
+- nos primeiros 10 minutos, o número vem do **histórico do mapa** perto do nível (mortes por hora de todas as contas, puxado para a média geral quando há poucas horas);
+- cada hunt encerrada guarda o que a previsão esperava; depois de 10 hunts, a razão entre mortes vistas e previstas corrige o número (entre ¼ e 4×).
+
+Acima de 5%/h o número fica amarelo e entra no painel de atenção; acima de 10%/h fica vermelho e gera notificação. O dano medido vem dos golpes corpo a corpo no knight e das magias em cada membro, então cura e regeneração entram só pela vida no começo de cada janela.
 
 ### Painel da conta
 
@@ -97,7 +110,7 @@ O app **não aplica** nada no jogo. Salvar, importar, renomear e excluir só fun
 
 ### Notificações
 
-O app avisa pelo macOS quando algo novo e importante entra no painel de atenção: missão pronta, sequência em risco, login a resgatar, invasão, mochila ou chaves cheias, hunt que acabou mal e hunt em que alguém chegou a menos de 15% da vida. Liga e desliga em **Dashboard → Notificar eventos importantes**. É local e só funciona no `.app` instalado.
+O app avisa pelo macOS quando algo novo e importante entra no painel de atenção: missão pronta, sequência em risco, login a resgatar, invasão, mochila ou chaves cheias, hunt que acabou mal, hunt em que alguém chegou a menos de 15% da vida e risco de morte de 10%/h ou mais. Liga e desliga em **Dashboard → Notificar eventos importantes**. É local e só funciona no `.app` instalado.
 
 ## Privacidade e conexões
 
@@ -146,7 +159,7 @@ O gerenciador não captura senhas: o site mantém a autenticação no perfil, co
 ## Limitações
 
 - **Formato do jogo:** se o jogo mudar o formato das mensagens, a coleta pode parar até ser ajustada.
-- **Estimativas:** dano de skills, ganho de equipamento e previsões de missão são estimativas a partir de dados públicos e das suas hunts; o app não conhece as regras internas do servidor.
+- **Estimativas:** dano de skills, ganho de equipamento, risco de morte e previsões de missão são estimativas a partir de dados públicos e das suas hunts; o app não conhece as regras internas do servidor.
 - **Som:** o WebKit não tem API pública para silenciar uma página; o app usa a SPI `_setPageMuted:`. Se uma versão futura do macOS removê-la, o botão de som fica desativado.
 - **Google, Discord ou CAPTCHA:** provedores podem impor restrições a navegadores embutidos. O app se identifica como Safari e abre os popups de login no mesmo perfil da conta, mas não automatiza essas etapas.
 - **Login expirou:** o servidor pode pedir login de novo mesmo com o perfil salvo.

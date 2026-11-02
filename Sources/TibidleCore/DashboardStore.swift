@@ -29,6 +29,7 @@ public final class DashboardStore {
     /// Average mana and health per party member during the current hunt (reset when a hunt starts or resumes).
     private var vitals: [Int: VitalsTracker] = [:]
     private var hits: [Int: HitsTracker] = [:]
+    private var risk: [Int: DeathRisk] = [:]
 
     public init(databaseURL: URL?, now: @escaping () -> Date = Date.init) {
         self.now = now
@@ -145,6 +146,7 @@ public final class DashboardStore {
             modeled[account] = ([:], 0, true, nil)
             vitals[account] = VitalsTracker()
             hits[account] = HitsTracker()
+            risk[account] = DeathRisk()
             entry["bestiarySnap"] = 0.0
         case "resume", "frame":
             if type == "resume", let battle = data["battleConfigs"] { entry["battle"] = battle }
@@ -153,8 +155,13 @@ public final class DashboardStore {
                 entry["huntBestiary"] = counters
                 entry["bestiarySnap"] = number((data["analyzer"] as? [String: Any])?["killsTotal"]) ?? 0
             }
-            if type == "resume" { modeled[account] = nil; vitals[account] = VitalsTracker(); hits[account] = HitsTracker() }
+            if type == "resume" { modeled[account] = nil; vitals[account] = VitalsTracker(); hits[account] = HitsTracker(); risk[account] = DeathRisk() }
             if let tally = data["hits"] as? [String: Any] { hits[account, default: HitsTracker()].add(tally, at: date) }
+            // A posted frame without hits is a window without damage.
+            if type == "frame", let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] {
+                risk[account, default: DeathRisk()].add(party: party, tally: data["hits"] as? [String: Any] ?? [:], at: date)
+                risk[account]?.accrue(now: date)
+            }
             if let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] { vitals[account, default: VitalsTracker()].add(party: party) }
             entry["status"] = "hunting"
             if let huntId = data["huntId"] { entry["huntId"] = huntId }
@@ -204,6 +211,11 @@ public final class DashboardStore {
                 }
             }
             if let measured = hits[account]?.summary() { summary["hits"] = measured }
+            // What the death risk expected over the hunt, to check it against the deaths seen.
+            if let tracker = risk[account], tracker.covered >= 600 {
+                summary["deathRisk"] = ["expected": tracker.expected, "hours": tracker.covered / 3600]
+            }
+            risk[account] = nil
             // What hit the party in the minute before someone died, with the vocations of the positions.
             if var death = hits[account]?.lastDeath {
                 let party = (entry["state"] as? [String: Any])?["party"] as? [[String: Any]] ?? []
@@ -317,6 +329,9 @@ public final class DashboardStore {
                 out["state"] = state
             }
             if entry["status"] as? String == "hunting", let measured = hits[index]?.summary() { out["hits"] = measured }
+            if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let estimate = deathRisk(index, entry) {
+                out["deathRisk"] = estimate
+            }
             out["battle"] = nil
             if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let bestiary = bestiaryProgress(entry) {
                 out["bestiary"] = bestiary
@@ -1027,6 +1042,40 @@ extension DashboardStore {
         }.sorted { ($0["xpPerHour"] as? Int ?? 0) > ($1["xpPerHour"] as? Int ?? 0) }.prefix(6)
         guard rows.contains(where: { $0["current"] as? Bool != true }) else { return nil }
         return ["level": Int(level), "range": Int(Self.whereLevels), "rows": Array(rows)]
+    }
+
+    /// The chance of a death in the next hour: from the hunt's own windows of damage once there are enough
+    /// (calibrated by finished hunts), from the map's deaths near this level before that.
+    func deathRisk(_ index: Int, _ entry: [String: Any]) -> [String: Any]? {
+        let runs = allRuns()
+        let calibration = DeathRisk.calibration(runs.compactMap { run in
+            (run.summary["deathRisk"] as? [String: Any]).flatMap { number($0["expected"]) }.map { ($0, number(run.summary["deaths"]) ?? 0) }
+        })
+        if var live = risk[index]?.estimate(now: now()), let rate = live["rate"] as? Double {
+            live["perHour"] = 1 - exp(-rate * calibration.factor)
+            live["members"] = (live["members"] as? [[String: Any]] ?? []).map { member in
+                var out = member
+                let p = number(member["perHour"]) ?? 0
+                out["perHour"] = 1 - exp(log(max(1e-12, 1 - p)) * calibration.factor)
+                return out
+            }
+            live["calibratedWith"] = calibration.runs >= 10 ? calibration.runs : 0
+            return live
+        }
+        let level = number(((entry["state"] as? [String: Any])?["character"] as? [String: Any])?["level"])
+        guard let huntId = number(entry["huntId"]).map({ Int($0) }), let level else { return nil }
+        var deaths = 0.0, hours = 0.0, allDeaths = 0.0, allHours = 0.0
+        for run in runs {
+            let s = run.summary
+            guard let seconds = number(s["elapsedSec"]), seconds >= Self.minRankedSeconds else { continue }
+            allDeaths += number(s["deaths"]) ?? 0
+            allHours += seconds / 3600
+            guard number(s["huntId"]).map({ Int($0) }) == huntId, let range = s["level"] as? [String: Any], let end = number(range["end"]),
+                  abs(((number(range["start"]) ?? end) + end) / 2 - level) <= Self.whereLevels else { continue }
+            deaths += number(s["deaths"]) ?? 0
+            hours += seconds / 3600
+        }
+        return DeathRisk.fromHistory(deaths: deaths, hours: hours, overallRate: allHours > 0 ? allDeaths / allHours : 0)
     }
 
     /// Also used by the development server, on top of the app's live state.

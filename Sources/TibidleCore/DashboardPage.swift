@@ -189,7 +189,8 @@ public enum DashboardPage {
     th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
     th { color: var(--muted); font-weight: 500; font-size: 12px; }
     td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
-    .warn-text { color: var(--warn-text); } .muted-text { color: var(--muted); }
+    
+    .bad-text { color: var(--bad-text); } .warn-text { color: var(--warn-text); } .muted-text { color: var(--muted); }
     table.mini { margin-top: 4px; font-size: 12px; }
     table.mini th, table.mini td { padding: 3px 4px; }
     table.mini th { font-size: 11px; }
@@ -708,6 +709,22 @@ public enum DashboardPage {
     // ---- account cards ----
     function stat(label, value, cls) { return el('div', null, el('small', null, label), el('b', cls ? { class: cls } : null, value)); }
 
+    // Chance of a death in the next hour: the hunt's own 3 s windows of damage against each member's health,
+    // or the map's deaths near this level before there are 10 minutes of them.
+    function deathRisk(a) {
+      const r = a.deathRisk;
+      if (!r) return null;
+      const p = num(r.perHour), pct = p >= 0.995 ? '>99' : p > 0 && p < 0.01 ? '<1' : String(Math.round(p * 100));
+      const cls = p >= 0.10 ? 'bad-text' : p >= 0.05 ? 'warn-text' : '';
+      const m = (r.members || [])[0];
+      const note = r.source === 'history'
+        ? `pelo histórico do mapa (${r.deaths} mortes em ${r.hours} h)`
+        : `pelo dano dos últimos ${Math.min(20, num(r.minutes))} min${m && p >= 0.01 ? ` · mais exposto: ${vocation(m.vocation)}` : ''}`;
+      const title = m ? `Maior dano em 3 s: ${fmt(m.biggestWindow)} · vida mínima ${fmt(m.lowestHealth)}/${fmt(m.maxHealth)}` : '';
+      return el('div', { class: 'madvice', style: { marginTop: '8px' }, title },
+        'Risco de morte ', el('b', { class: cls }, `~${pct}%/h`), ` · ${note}`);
+    }
+
     function card(a) {
       const [statusText, statusColor] = STATUS[a.status] || STATUS.offline;
       const statusDot = el('i', { style: { background: statusColor, border: a.status === 'offline' ? '1px solid var(--muted)' : '0' } });
@@ -734,6 +751,8 @@ public enum DashboardPage {
           stat('Lucro/kill', num(an.killsTotal) ? signed(profit / num(an.killsTotal)) : '—')));
         const top = kills(a, 3);
         if (top) node.append(top);
+        const risk = deathRisk(a);
+        if (risk) node.append(risk);
       } else if (a.lastSummary) {
         const s = a.lastSummary;
         node.append(el('div', { class: 'note' },
