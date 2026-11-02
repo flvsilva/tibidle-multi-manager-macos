@@ -59,15 +59,31 @@ for attempt in 1 2 3 4 5; do
   sleep 1
 done
 
+# The packages come from a copy outside the synced folder, without extended attributes, signed and checked
+# there: the file provider can put Finder metadata back on the app in dist/, which breaks the signature.
+mkdir -p "$WORK/dmg"
+PACKED="$WORK/dmg/$APP_NAME.app"
+ditto --noextattr --noqtn "$APP" "$PACKED"
+xattr -cr "$PACKED"
+codesign --force --deep --sign - "$PACKED"
+codesign --verify --deep --strict "$PACKED" || { echo "Assinatura inválida na cópia para os pacotes" >&2; exit 1; }
+
 rm -f "$DIST/TibidleMultiManager-macOS.zip"
-ditto -c -k --keepParent "$APP" "$DIST/TibidleMultiManager-macOS.zip"
+ditto -c -k --keepParent "$PACKED" "$DIST/TibidleMultiManager-macOS.zip"
 # The DMG opens to the app next to an Applications link: drag one onto the other to install.
 DMG="$DIST/TibidleMultiManager-macOS.dmg"
-mkdir -p "$WORK/dmg"
-ditto "$APP" "$WORK/dmg/$APP_NAME.app"
 ln -s /Applications "$WORK/dmg/Applications"
 rm -f "$DMG"
 hdiutil create -quiet -volname "$APP_NAME" -srcfolder "$WORK/dmg" -fs HFS+ -format UDZO -ov "$DMG"
+
+# Check what a download gets: the app inside the DMG.
+MOUNT="$WORK/mount"
+mkdir -p "$MOUNT"
+hdiutil attach -quiet -nobrowse -readonly -mountpoint "$MOUNT" "$DMG"
+VALID=0
+codesign --verify --deep --strict "$MOUNT/$APP_NAME.app" && VALID=1
+hdiutil detach -quiet "$MOUNT"
+[ "$VALID" = 1 ] || { echo "Assinatura inválida no app dentro do DMG" >&2; exit 1; }
 
 echo "App:    $APP"
 echo "DMG:    $DMG"
