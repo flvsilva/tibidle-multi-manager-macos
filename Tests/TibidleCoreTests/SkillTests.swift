@@ -107,6 +107,31 @@ final class SkillTests: XCTestCase {
         XCTAssertEqual(SkillAdvisor.calibrate(Array(runs.prefix(2))), .none, "needs at least three hunts")
     }
 
+    func testSamplesFromAnOlderDamageModelStopCalibrating() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("calibration-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sql = "CREATE TABLE calibration (account INTEGER, ended_at REAL, predicted TEXT, actual REAL);" +
+            (0..<5).map { "INSERT INTO calibration VALUES (0, \($0), '{\"1\":100}', 200);" }.joined()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [url.path, sql]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(DashboardStore(databaseURL: url).calibrationSamples(), 0, "old samples were predicted without skill bonuses")
+    }
+
+    func testDamageUsesTheTrainedLevelPlusItsBonus() {
+        let store = DashboardStore(databaseURL: nil)
+        store.setSpellCatalog(spells)
+        let member: [String: Any] = ["name": "Druida", "vocation": "Elder Druid", "level": 100,
+                                     "skillLevels": ["melee": 10, "distance": 10, "magic": 53], "skillBonus": ["magic": 10, "distance": 3],
+                                     "kit": [["name": "Ice Strike"]]]
+        let members = store.skillMembers(["state": ["party": [member]]])
+        XCTAssertEqual(members.first?.magic, 63)
+        XCTAssertEqual(members.first?.distance, 13)
+        XCTAssertEqual(members.first?.melee, 10)
+    }
+
     func testStoreBuildsAnalysisAndLearnsFromFinishedHunts() {
         var clock = Date(timeIntervalSince1970: 1_800_000_000)
         let store = DashboardStore(databaseURL: nil, now: { clock })

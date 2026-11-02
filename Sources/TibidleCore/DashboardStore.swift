@@ -54,6 +54,9 @@ public final class DashboardStore {
             CREATE TABLE IF NOT EXISTS calibration (account INTEGER, ended_at REAL, predicted TEXT, actual REAL);
             """)
         migrateLegacyHunts()
+        var versioned = false
+        query("SELECT 1 FROM pragma_table_info('calibration') WHERE name = 'model'", []) { _ in versioned = true }
+        if !versioned { exec("ALTER TABLE calibration ADD COLUMN model INTEGER DEFAULT 1") }
         reloadCalibration()
         run("DELETE FROM samples WHERE ts < ?", [.double(self.now().timeIntervalSince1970 - Self.retention)])
     }
@@ -656,6 +659,9 @@ extension DashboardStore {
 
 extension DashboardStore {
     static let calibrationWindow = 60
+    /// Bumped when the damage model changes, so samples predicted by an older model stop calibrating the new one
+    /// (2: skill levels count their bonus from items and bestiary).
+    static let calibrationModel = 2
 
     /// Party members as the model sees them; nil entries without a usable spell kit are skipped.
     func skillMembers(_ entry: [String: Any]) -> [SkillAdvisor.Member] {
@@ -669,12 +675,14 @@ extension DashboardStore {
             let equipped = ((member["kit"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String }
             let kit = (configured.isEmpty ? equipped : configured).filter { spells.spell(named: $0) != nil }
             guard !kit.isEmpty else { return nil }
-            let levels = member["skillLevels"] as? [String: Any] ?? [:]
+            // Damage uses the level with its bonus (items, bestiary…) on top of the trained one.
+            let trained = member["skillLevels"] as? [String: Any] ?? [:], bonus = member["skillBonus"] as? [String: Any] ?? [:]
+            func level(_ skill: String, _ fallback: Double) -> Double { (number(trained[skill]) ?? fallback) + (number(bonus[skill]) ?? 0) }
             var minCreatures: [String: Int] = [:]
             for (key, value) in config?["minCreatures"] as? [String: Any] ?? [:] { minCreatures[key] = Int(number(value) ?? 1) }
             return SkillAdvisor.Member(
                 name: name, vocation: vocation, level: Int(number(member["level"]) ?? 1),
-                melee: number(levels["melee"]) ?? 10, distance: number(levels["distance"]) ?? 10, magic: number(levels["magic"]) ?? 0,
+                melee: level("melee", 10), distance: level("distance", 10), magic: level("magic", 0),
                 attack: number(member["weaponAttack"]), kit: kit, minCreatures: minCreatures)
         }
     }
@@ -707,8 +715,8 @@ extension DashboardStore {
               let actual = number(summary["damageDealt"]), actual > 0 else { return }
         let predicted = state.damage.mapValues { $0 / state.seconds }
         guard let text = jsonString(Dictionary(uniqueKeysWithValues: predicted.map { (String($0.key), $0.value) })) else { return }
-        run("INSERT INTO calibration (account, ended_at, predicted, actual) VALUES (?, ?, ?, ?)",
-            [.int(account), .double(date.timeIntervalSince1970), .text(text), .double(actual / elapsed)])
+        run("INSERT INTO calibration (account, ended_at, predicted, actual, model) VALUES (?, ?, ?, ?, ?)",
+            [.int(account), .double(date.timeIntervalSince1970), .text(text), .double(actual / elapsed), .int(Self.calibrationModel)])
         reloadCalibration()
     }
 
@@ -716,7 +724,8 @@ extension DashboardStore {
 
     func reloadCalibration() {
         var runs: [(predicted: [Int: Double], actual: Double)] = []
-        query("SELECT predicted, actual FROM calibration ORDER BY ended_at DESC LIMIT \(Self.calibrationWindow)", []) { row in
+        query("SELECT predicted, actual FROM calibration WHERE model = ? ORDER BY ended_at DESC LIMIT \(Self.calibrationWindow)",
+              [.int(Self.calibrationModel)]) { row in
             guard let text = sqlite3_column_text(row, 0),
                   let object = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)) as? [String: Double] else { return }
             runs.append((Dictionary(uniqueKeysWithValues: object.compactMap { key, value in Int(key).map { ($0, value) } }),
