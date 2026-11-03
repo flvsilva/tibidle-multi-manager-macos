@@ -145,6 +145,13 @@ public enum DashboardPage {
     .panel-tabs { padding: 10px 16px 0; overflow-x: auto; }
     .advice { margin: 4px 0 10px; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
     .attention ul { margin: 2px 0 0; padding-left: 16px; display: grid; gap: 2px; }
+    ul.dangers { margin: 4px 0 0; padding-left: 16px; display: grid; gap: 3px; font-size: 12px; }
+    .madvice.good { color: var(--good-text); }
+    .mute { margin-left: 6px; white-space: nowrap; font-size: 11px; color: var(--muted); }
+    .mute button { font: inherit; color: var(--muted); background: none; border: 0; padding: 0 2px; cursor: pointer; text-decoration: underline dotted; }
+    .mute button:hover { color: var(--ink-2); }
+    .attention details { font-size: 12px; color: var(--muted); } .attention details summary { cursor: pointer; }
+    .attention details li { margin-top: 2px; }
     #setup-modal { z-index: 60; }
     .modal { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.5); }
     .modal.open { display: flex; }
@@ -487,7 +494,7 @@ public enum DashboardPage {
 
     // The card shows the essentials; the detail behind each topic opens in a per-account panel, one tab per topic.
     let openPanel = null;
-    const TABS = [['hunt', 'Hunt'], ['level', 'Nível'], ['skills', 'Skills'], ['gear', 'Equipamento'], ['daily', 'Missões']];
+    const TABS = [['hunt', 'Hunt'], ['level', 'Nível'], ['risk', 'Risco'], ['skills', 'Skills'], ['gear', 'Equipamento'], ['daily', 'Missões']];
     const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
     function tools(a) {
       const items = [];
@@ -498,6 +505,11 @@ public enum DashboardPage {
       } else if (a.benchmark || a.bestiary) items.push(['hunt', 'Hunt', 'histórico e bestiário', false]);
       const p = a.levelPlan;
       if (p) items.push(['level', `Nível ${p.next}`, p.etaMs ? `em ~${hm(p.etaMs)}` : `faltam ${kk(p.needed)} XP`, false]);
+      if (a.deathRisk || a.dangers || a.healing) {
+        const r = a.deathRisk, n = a.dangers ? num(a.dangers.count) : 0;
+        const parts = [r ? `${riskPercent(r.perHour)}%/h` : null, n ? plural(n, 'susto', 'sustos') : null].filter(Boolean);
+        items.push(['risk', 'Risco', parts.join(' · ') || 'cura e supplies', !!r && num(r.perHour) >= 0.05]);
+      }
       const sk = a.skills;
       if (sk && sk.members && sk.members.length) {
         const tips = sk.members.reduce((sum, m) => sum + (m.suggestions || []).length, 0);
@@ -537,6 +549,55 @@ public enum DashboardPage {
         .map((m) => `${vocation((party[m.position] || {}).vocation) || `membro ${m.position + 1}`} ${Math.round(100 * num(m.magicPerSecond) / total)}%`).join(' · '));
     }
     // The minute before a death: who died, what hit, and who took it.
+    // "~12", or "<1" / ">99" without the tilde.
+    const riskPercent = (p) => num(p) >= 0.995 ? '>99' : num(p) < 0.01 ? (num(p) > 0 ? '<1' : '0') : `~${Math.round(num(p) * 100)}`;
+    // Each time someone fell below 40% of the health: when, how low, how long until back above 60%, what was hitting.
+    function dangerList(d, limit) {
+      if (!d || !(d.moments || []).length) return null;
+      const list = d.moments.slice(0, limit);
+      return el('div', null, el('div', { class: 'mhead', style: { marginTop: '10px' } }, `Momentos de perigo (${d.count}) · abaixo de 40% da vida`),
+        el('ul', { class: 'dangers' }, list.map((m) => {
+          const hit = (m.creatures || []).map((c) => `${c.name} ${fmt(num(c.melee) + num(c.magic))}`).join(' · ');
+          const back = m.ongoing ? 'ainda abaixo de 60%' : `acima de 60% em ${m.seconds} s`;
+          return el('li', { class: num(m.lowest) < 0.15 ? 'bad-text' : '' },
+            `${time(m.at)} · ${vocation(m.vocation)} a ${Math.round(num(m.lowest) * 100)}% (${fmt(m.health)}/${fmt(m.maxHealth)}) · ${back}`,
+            hit ? el('span', { class: 'muted-text' }, ` — nos 15 s antes: ${hit}`) : null);
+        })),
+        d.moments.length > list.length ? el('div', { class: 'sk-foot' }, `Mostrando os ${list.length} mais recentes.`) : null);
+    }
+    function riskBody(a) {
+      const box = el('div');
+      const r = a.deathRisk;
+      if (r) {
+        box.append(deathRisk(a));
+        const members = (r.members || []).filter((m) => m.maxHealth);
+        if (members.length) box.append(el('table', { class: 'mini', style: { marginTop: '6px' } },
+          el('thead', null, el('tr', null, ['Membro', 'Risco/h', 'Maior perda em 3 s', 'Vida mínima'].map((t) => el('th', null, t)))),
+          el('tbody', null, members.map((m) => el('tr', null, el('td', null, vocation(m.vocation)), el('td', null, `${riskPercent(m.perHour)}%`),
+            el('td', null, `${fmt(m.biggestWindow)} (${Math.round(100 * num(m.biggestWindow) / num(m.maxHealth))}% da vida)`),
+            el('td', null, `${fmt(m.lowestHealth)}/${fmt(m.maxHealth)}`))))));
+      }
+      const danger = dangerList(a.dangers, 12);
+      if (danger) box.append(danger);
+      else if (a.status === 'hunting') box.append(el('div', { class: 'madvice', style: { marginTop: '10px' } }, 'Ninguém caiu abaixo de 40% da vida nesta hunt.'));
+      const h = a.healing;
+      if (h) {
+        const pct = (v) => `${Math.round(num(v) * 100)}%`;
+        const ref = h.reference, cost = num(h.suppliesPerThousand);
+        const lines = [el('div', { class: 'madvice' }, `Cura feita ${fmt(h.healingPerHour)}/h contra ${fmt(h.takenPerHour)}/h de dano recebido (${pct(h.healingShare)}); o resto vem de potions e regeneração.`),
+          el('div', { class: 'madvice' }, `Supplies: ${fmt(Math.round(cost))} gold por 1.000 de dano recebido`,
+            ref ? ` · neste mapa perto do seu nível: mediana ${fmt(Math.round(ref.median))}, melhor ${fmt(Math.round(ref.best))} (${ref.runs} hunts)` : '')];
+        if (ref && cost > num(ref.median) * 1.3) {
+          lines.push(el('div', { class: 'madvice warn-text' }, `${Math.round(100 * (cost / num(ref.median) - 1))}% acima do normal neste mapa para o mesmo dano: potions ou cura disparando cedo demais, ou potions mais caras. Veja quem gasta mais na party do cartão.`));
+        } else if (ref && cost < num(ref.median) * 0.8) {
+          lines.push(el('div', { class: 'madvice good' }, `${Math.round(100 * (1 - cost / num(ref.median)))}% abaixo do normal neste mapa: cura econômica para o dano que a party leva.`));
+        }
+        box.append(el('div', { class: 'mhead', style: { marginTop: '10px' } }, 'Cura e supplies'), ...lines);
+      }
+      box.append(el('div', { class: 'sk-foot' }, 'O risco compara cada janela de 3 s com as que começaram com a vida parecida e junta o resultado com as mortes do mapa perto do seu nível. ' +
+        'Os momentos de perigo vêm da vida lida a cada 3 s; as criaturas, dos golpes medidos nos 15 s antes do ponto mais baixo.'));
+      return box.childNodes.length > 1 ? box : el('div', { class: 'empty' }, 'Sem dados de risco agora (a conta precisa estar caçando há alguns minutos).');
+    }
     function deathBody(d) {
       if (!d) return null;
       const creatures = (d.creatures || []).map((c) => `${c.name} ${fmt(num(c.melee) + num(c.magic))}` +
@@ -589,7 +650,7 @@ public enum DashboardPage {
     }
     function panelBody(a, tab) {
       const parts = tab === 'hunt' ? [insights(a), benchmark(a), bestiary(a), kills(a, 8), drops(a)]
-        : tab === 'level' ? [levelPlan(a), whereToHunt(a)] : tab === 'skills' ? [skillsBody(a)] : tab === 'gear' ? [gearBody(a)] : [missions(a)];
+        : tab === 'level' ? [levelPlan(a), whereToHunt(a)] : tab === 'risk' ? [riskBody(a)] : tab === 'skills' ? [skillsBody(a)] : tab === 'gear' ? [gearBody(a)] : [missions(a)];
       const shown = parts.filter(Boolean);
       return shown.length ? el('div', null, shown) : el('div', { class: 'empty' }, 'Sem dados para esta conta agora.');
     }
@@ -714,7 +775,7 @@ public enum DashboardPage {
     function deathRisk(a) {
       const r = a.deathRisk;
       if (!r) return null;
-      const p = num(r.perHour), pct = p >= 0.995 ? '>99' : p > 0 && p < 0.01 ? '<1' : String(Math.round(p * 100));
+      const p = num(r.perHour), pct = riskPercent(p);
       const cls = p >= 0.10 ? 'bad-text' : p >= 0.05 ? 'warn-text' : '';
       const m = (r.members || [])[0];
       const note = r.source === 'history'
@@ -722,7 +783,7 @@ public enum DashboardPage {
         : `pela vida perdida nos últimos ${Math.min(20, num(r.minutes))} min e ${r.hours} h do mapa${m && p >= 0.01 ? ` · mais exposto: ${vocation(m.vocation)}` : ''}`;
       const title = m ? `Maior perda de vida em 3 s (já com a cura): ${fmt(m.biggestWindow)} · vida mínima ${fmt(m.lowestHealth)}/${fmt(m.maxHealth)}` : '';
       return el('div', { class: 'madvice', style: { marginTop: '8px' }, title },
-        'Risco de morte ', el('b', { class: cls }, `~${pct}%/h`), ` · ${note}`);
+        'Risco de morte ', el('b', { class: cls }, `${pct}%/h`), ` · ${note}`);
     }
 
     function card(a) {
@@ -1006,9 +1067,32 @@ public enum DashboardPage {
         const bullet = (t) => { const s = strip(t); return s.charAt(0).toUpperCase() + s.slice(1); };
         const level = list.reduce((worst, i) => (RANK[i.level] || 0) > (RANK[worst] || 0) ? i.level : worst, list[0].level);
         return el('div', { class: 'item ' + level }, el('span', { class: 'swatch', style: { background: SERIES[index] } }),
-          el('div', null, label ? el('b', null, label) : null, list.length === 1 ? `: ${strip(list[0].text)}` : el('ul', null, list.map((i) => el('li', null, bullet(i.text))))));
+          el('div', null, label ? el('b', null, label) : null, list.length === 1 ? [`: ${strip(list[0].text)}`, muteControls(list[0])]
+            : el('ul', null, list.map((i) => el('li', null, bullet(i.text), muteControls(i))))));
       });
+      const muted = data.muted || [];
+      if (muted.length) {
+        rows.push(el('details', null, el('summary', null, `${muted.length} ${muted.length === 1 ? 'aviso ignorado' : 'avisos ignorados'}`),
+          el('ul', null, muted.map((i) => el('li', null, i.text, ` (${i.always ? 'sempre' : 'nesta hunt'})`, LOCAL ? el('span', { class: 'mute' }, button('reativar', () => muteAction('/api/attention/unmute', { mute: i.mute }))) : null)))));
+      }
       $('attention').replaceChildren(...(rows.length ? rows : [el('div', { class: 'ok' }, '✓ Nada precisa de atenção agora.')]));
+    }
+
+    // Ignoring advice is a write, so only from this Mac (the server refuses it from the network too).
+    const LOCAL = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+    function button(text, action) {
+      const b = el('button', { type: 'button' }, text);
+      b.addEventListener('click', action);
+      return b;
+    }
+    function muteControls(item) {
+      if (!LOCAL || !item.mute) return null;
+      return el('span', { class: 'mute' }, 'ignorar ', button('nesta hunt', () => muteAction('/api/attention/mute', { mute: item.mute, always: false })),
+        ' · ', button('sempre', () => muteAction('/api/attention/mute', { mute: item.mute, always: true })));
+    }
+    async function muteAction(path, body) {
+      try { await post(path, body); } catch (_) {}
+      refreshState();
     }
 
     // ---- charts ----
@@ -1163,7 +1247,7 @@ public enum DashboardPage {
         setupBtn = el('button', { class: 'pr-btn', type: 'button', style: { marginTop: '8px' } }, 'Setup desta hunt / comparar com outra');
         setupBtn.addEventListener('click', (e) => { e.stopPropagation(); openSetup(h); });
       }
-      const tr = el('tr', { class: 'detail' }, el('td', { colspan: '13' }, el('div', { class: 'detail-grid' }, cells), deathBody(h.deathHits),
+      const tr = el('tr', { class: 'detail' }, el('td', { colspan: '13' }, el('div', { class: 'detail-grid' }, cells), deathBody(h.deathHits), dangerList(h.dangers, 8),
         spent > 0 ? el('div', { style: { marginTop: '6px' } }, 'Supplies por membro: ' + members.slice().sort((x, y) => num(y.suppliesGold) - num(x.suppliesGold))
           .map((m) => `${vocation(m.vocation)} ${Math.round(100 * num(m.suppliesGold) / spent)}% (${fmt(m.suppliesGold)})`).join(' · ')) : null,
         el('div', { style: { marginTop: '6px' } }, 'Mais abatidos: ' + list(h.kills, 6)),

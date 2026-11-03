@@ -9,8 +9,20 @@ public struct AttentionItem: Equatable {
     public let text: String
     public let notify: Bool
 
+    /// What "ignorar" silences: the advice about a setup (wrong element, low mana, a risky hunt), not the events.
+    /// The same as the key, without the level a risk passed through, so a muted risk stays muted when it worsens.
+    public var mute: String? {
+        switch kind {
+        case "weapon", "element", "mana", "setup": return key
+        case "risk": return key.split(separator: "|").dropLast().joined(separator: "|")
+        default: return nil
+        }
+    }
+
     var json: [String: Any] {
-        ["key": key, "account": account, "kind": kind, "level": level, "text": text, "notify": notify]
+        var out: [String: Any] = ["key": key, "account": account, "kind": kind, "level": level, "text": text, "notify": notify]
+        if let mute { out["mute"] = mute }
+        return out
     }
 }
 

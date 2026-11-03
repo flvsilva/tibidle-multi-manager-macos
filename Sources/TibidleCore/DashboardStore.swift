@@ -30,6 +30,9 @@ public final class DashboardStore {
     private var vitals: [Int: VitalsTracker] = [:]
     private var hits: [Int: HitsTracker] = [:]
     private var risk: [Int: DeathRisk] = [:]
+    private var dangers: [Int: DangerTracker] = [:]
+    /// Attention advice the user chose to ignore: mute key → the hunt it was muted in (its start), 0 for always.
+    private var mutes: [String: Double] = [:]
 
     public init(databaseURL: URL?, now: @escaping () -> Date = Date.init) {
         self.now = now
@@ -53,12 +56,16 @@ public final class DashboardStore {
             CREATE TABLE IF NOT EXISTS presets (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, vocation TEXT, hunt_id INTEGER,
                 hunt_title TEXT, text TEXT, created_at REAL);
             CREATE TABLE IF NOT EXISTS calibration (account INTEGER, ended_at REAL, predicted TEXT, actual REAL);
+            CREATE TABLE IF NOT EXISTS muted (mute TEXT PRIMARY KEY, hunt REAL, text TEXT, created_at REAL);
             """)
         migrateLegacyHunts()
         var versioned = false
         query("SELECT 1 FROM pragma_table_info('calibration') WHERE name = 'model'", []) { _ in versioned = true }
         if !versioned { exec("ALTER TABLE calibration ADD COLUMN model INTEGER DEFAULT 1") }
         reloadCalibration()
+        query("SELECT mute, hunt FROM muted", []) { row in
+            if let text = sqlite3_column_text(row, 0) { self.mutes[String(cString: text)] = sqlite3_column_double(row, 1) }
+        }
         run("DELETE FROM samples WHERE ts < ?", [.double(self.now().timeIntervalSince1970 - Self.retention)])
     }
 
@@ -147,6 +154,7 @@ public final class DashboardStore {
             vitals[account] = VitalsTracker()
             hits[account] = HitsTracker()
             risk[account] = DeathRisk()
+            dangers[account] = DangerTracker()
             entry["bestiarySnap"] = 0.0
         case "resume", "frame":
             if type == "resume", let battle = data["battleConfigs"] { entry["battle"] = battle }
@@ -155,11 +163,13 @@ public final class DashboardStore {
                 entry["huntBestiary"] = counters
                 entry["bestiarySnap"] = number((data["analyzer"] as? [String: Any])?["killsTotal"]) ?? 0
             }
-            if type == "resume" { modeled[account] = nil; vitals[account] = VitalsTracker(); hits[account] = HitsTracker(); risk[account] = DeathRisk() }
+            if type == "resume" { modeled[account] = nil; vitals[account] = VitalsTracker(); hits[account] = HitsTracker(); risk[account] = DeathRisk(); dangers[account] = DangerTracker() }
             if let tally = data["hits"] as? [String: Any] { hits[account, default: HitsTracker()].add(tally, at: date) }
             if type == "frame", let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] {
                 risk[account, default: DeathRisk()].add(party: party, at: date)
                 risk[account]?.accrue(now: date)
+                let tracker = hits[account]
+                dangers[account, default: DangerTracker()].add(party: party, at: date) { tracker?.latest(seconds: 15, now: date) }
             }
             if let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] { vitals[account, default: VitalsTracker()].add(party: party) }
             entry["status"] = "hunting"
@@ -215,6 +225,8 @@ public final class DashboardStore {
                 summary["deathRisk"] = ["expected": tracker.expected, "hours": tracker.covered / 3600, "model": DeathRisk.model]
             }
             risk[account] = nil
+            if let moments = dangers[account]?.summary() { summary["dangers"] = moments }
+            dangers[account] = nil
             // What hit the party in the minute before someone died, with the vocations of the positions.
             if var death = hits[account]?.lastDeath {
                 let party = (entry["state"] as? [String: Any])?["party"] as? [[String: Any]] ?? []
@@ -291,16 +303,49 @@ public final class DashboardStore {
         queue.sync {
             let accounts = buildAccounts()
             let nowMs = now().timeIntervalSince1970 * 1000
+            let items = Attention.evaluate(accounts: accounts, now: nowMs)
             var state: [String: Any] = ["generatedAt": nowMs, "accounts": accounts,
-                                        "attention": Attention.evaluate(accounts: accounts, now: nowMs).map(\.json)]
+                                        "attention": items.filter { !muted($0, accounts) }.map(\.json),
+                                        "muted": items.filter { muted($0, accounts) }.map { $0.json.merging(["always": mutes[$0.mute ?? ""] == 0]) { a, _ in a } }]
             if let update { state["update"] = update }
             return json(state)
         }
     }
 
-    /// Current attention items (used by the macOS notifier).
+    /// Current attention items (used by the macOS notifier), without the ignored ones.
     public func attention() -> [AttentionItem] {
-        queue.sync { Attention.evaluate(accounts: buildAccounts(), now: now().timeIntervalSince1970 * 1000) }
+        queue.sync {
+            let accounts = buildAccounts()
+            return Attention.evaluate(accounts: accounts, now: now().timeIntervalSince1970 * 1000).filter { !muted($0, accounts) }
+        }
+    }
+
+    /// Ignored always, or in the hunt the account is on now (a new hunt brings the advice back).
+    private func muted(_ item: AttentionItem, _ accounts: [[String: Any]]) -> Bool {
+        guard let mute = item.mute, let hunt = mutes[mute] else { return false }
+        return hunt == 0 || accounts.first { $0["index"] as? Int == item.account }.map { number($0["huntStartedAt"]) == hunt } == true
+    }
+
+    /// Ignores an attention item's advice: in the account's current hunt only, or always.
+    public func mute(_ mute: String, always: Bool) -> Bool {
+        queue.sync {
+            let accounts = buildAccounts()
+            let items = Attention.evaluate(accounts: accounts, now: now().timeIntervalSince1970 * 1000)
+            guard let item = items.first(where: { $0.mute == mute }) else { return false }
+            let hunt = always ? 0 : accounts.first { $0["index"] as? Int == item.account }.flatMap { number($0["huntStartedAt"]) } ?? 0
+            guard always || hunt > 0 else { return false }
+            mutes[mute] = hunt
+            run("INSERT OR REPLACE INTO muted (mute, hunt, text, created_at) VALUES (?, ?, ?, ?)",
+                [.text(mute), .double(hunt), .text(item.text), .double(now().timeIntervalSince1970)])
+            return true
+        }
+    }
+
+    public func unmute(_ mute: String) {
+        queue.sync {
+            mutes[mute] = nil
+            run("DELETE FROM muted WHERE mute = ?", [.text(mute)])
+        }
     }
 
     private func buildAccounts() -> [[String: Any]] {
@@ -331,6 +376,8 @@ public final class DashboardStore {
             if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let estimate = deathRisk(index, entry) {
                 out["deathRisk"] = estimate
             }
+            if entry["status"] as? String == "hunting", let moments = dangers[index]?.summary() { out["dangers"] = moments }
+            if entry["status"] as? String == "hunting", let healing = healing(index, entry) { out["healing"] = healing }
             out["battle"] = nil
             if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let bestiary = bestiaryProgress(entry) {
                 out["bestiary"] = bestiary
@@ -1082,6 +1129,33 @@ extension DashboardStore {
         live["hours"] = (hours * 10).rounded() / 10
         live["calibratedWith"] = calibration.runs >= 10 ? calibration.runs : 0
         return live
+    }
+
+    /// What the healing costs: the game's healing done against the damage taken, and gold of supplies per 1000
+    /// of damage taken, against the hunts of any account on this map near this level (30 min or more).
+    static let minHealingSeconds = 20 * 60.0
+    func healing(_ index: Int, _ entry: [String: Any]) -> [String: Any]? {
+        guard let analyzer = entry["analyzer"] as? [String: Any], let elapsed = number(analyzer["elapsedMs"]), elapsed >= Self.minHealingSeconds * 1000,
+              let taken = number(analyzer["damageTaken"]), taken > 0 else { return nil }
+        let hours = elapsed / 3_600_000
+        let supplies = number(analyzer["suppliesGold"]) ?? 0, healed = number(analyzer["healingDone"]) ?? 0
+        var out: [String: Any] = ["healingPerHour": Int(healed / hours), "takenPerHour": Int(taken / hours),
+                                  "healingShare": healed / taken, "suppliesPerThousand": supplies / taken * 1000]
+        let level = number(((entry["state"] as? [String: Any])?["character"] as? [String: Any])?["level"])
+        let huntId = number(entry["huntId"]).map { Int($0) }
+        var costs: [Double] = []
+        for run in allRuns() {
+            let s = run.summary
+            guard let level, number(s["huntId"]).map({ Int($0) }) == huntId, let seconds = number(s["elapsedSec"]), seconds >= Self.minBenchmarkSeconds,
+                  let runTaken = number(s["damageTaken"]), runTaken > 0, let range = s["level"] as? [String: Any], let end = number(range["end"]),
+                  abs(((number(range["start"]) ?? end) + end) / 2 - level) <= Self.whereLevels else { continue }
+            costs.append((number(s["suppliesGold"]) ?? 0) / runTaken * 1000)
+        }
+        if costs.count >= 3 {
+            costs.sort()
+            out["reference"] = ["median": costs[costs.count / 2], "best": costs[0], "runs": costs.count]
+        }
+        return out
     }
 
     /// Also used by the development server, on top of the app's live state.

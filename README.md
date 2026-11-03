@@ -45,6 +45,7 @@ Abra em **Dashboard → Abrir dashboard** ou, de outro aparelho na mesma rede (c
   - skill, wand ou rod de um elemento que os monstros resistem (menos de 50% do dano), com a arma que rende mais; membro com menos de 10% de mana em média;
   - **hunt arriscada:** alguém chegou a menos de 30% da vida, ou um golpe corpo a corpo leva 35% ou mais da vida do knight, com a criatura que mais machuca;
   - **risco de morte** de 5%/h ou mais (veja abaixo), com o membro mais exposto.
+- **Ignorar avisos:** cada conselho de setup (elemento ou arma, mana, hunt arriscada, setup diferente da melhor hunt) tem **ignorar nesta hunt** ou **sempre**. Os ignorados saem do painel e das notificações e ficam listados embaixo, com **reativar**. Mudou a arma, o aviso volta, pois é outro aviso. Só funciona no dashboard aberto neste Mac.
 
 ### Cartão de cada conta
 
@@ -66,6 +67,7 @@ Acima de 5%/h o número fica amarelo e entra no painel de atenção; acima de 10
 ### Painel da conta
 
 - **Hunt:** a melhor hunt recente da conta nesse mapa (lucro/h de lá e de agora, o que mudou no setup de batalha, supplies por membro, botão para ver o setup completo e salvar como preset); o histórico das contas nesse mapa no nível atual ±2, para separar "é o nível" de "é o setup"; o bestiário do mapa com os marcos e o tempo até cada um; kills e drops.
+- **Risco:** o risco de morte por membro (maior perda de vida em 3 s, vida mínima); os **momentos de perigo** da hunt, cada vez que alguém caiu abaixo de 40% da vida, com o horário, até onde caiu, quanto tempo levou para passar de 60% e as criaturas que mais bateram nos 15 s antes; e **cura e supplies**: cura feita contra o dano recebido e gold de supplies por 1.000 de dano recebido, comparado com a mediana e a melhor hunt do mapa perto do seu nível (30% acima do normal fica amarelo). Os momentos de perigo também ficam nos detalhes de cada hunt encerrada.
 - **Nível:** XP que falta, tempo no ritmo atual e, nas hunts da conta perto desse nível, XP/h, lucro/h e o gold ganho ou gasto até subir; e **onde suas contas caçaram** no nível ±5 (qualquer conta, últimos 60 dias): XP/h, lucro/h e dano recebido/h por mapa, para as contas de trás seguirem as da frente.
 - **Skills:** dano estimado de cada skill contra os monstros da hunt, avisos de elemento resistido e sugestões de troca com o ganho e o custo de mana (veja [Análise de skills](#análise-de-skills)).
 - **Equipamento:** o dano recebido medido golpe a golpe, as melhorias de equipamento e o equipamento completo da party (veja [Conselheiro de equipamento](#conselheiro-de-equipamento)).

@@ -90,12 +90,12 @@ public enum DashboardRouter {
         }
     }
 
-    /// The only writes: the local preset library. Loopback only, with a custom header (a web page on
+    /// The only writes: the local preset library and the ignored attention items. Loopback only, with a custom header (a web page on
     /// another origin cannot send it without a preflight, which this server never answers) and a Host check
     /// against DNS rebinding.
     private static func post(_ request: HTTPRequest, store: DashboardStore) -> HTTPResponse {
         let path = request.target.split(separator: "?").first.map(String.init) ?? ""
-        guard path.hasPrefix("/api/presets/") else { return text(405, "Método não permitido") }
+        guard path.hasPrefix("/api/presets/") || path.hasPrefix("/api/attention/") else { return text(405, "Método não permitido") }
         let host = (request.headers["host"] ?? "").lowercased()
         let hostName = host.hasPrefix("[") ? String(host.prefix { $0 != "]" }) + "]" : String(host.split(separator: ":").first ?? "")
         guard request.isLocal, request.headers["x-tibidle"] == "1", ["localhost", "127.0.0.1", "[::1]"].contains(hostName),
@@ -126,6 +126,13 @@ public enum DashboardRouter {
         case "/api/presets/rename":
             guard let id = body["id"] as? Int, let name = body["name"] as? String else { return text(400, "Parâmetros inválidos") }
             return reply(store.renamePreset(id: id, name: name).map { id })
+        case "/api/attention/mute":
+            guard let mute = body["mute"] as? String, mute.count <= 200 else { return text(400, "Parâmetros inválidos") }
+            return store.mute(mute, always: body["always"] as? Bool == true) ? reply(.success(0)) : reply(.failure(.message("Este aviso já não está no painel.")))
+        case "/api/attention/unmute":
+            guard let mute = body["mute"] as? String, mute.count <= 200 else { return text(400, "Parâmetros inválidos") }
+            store.unmute(mute)
+            return reply(.success(0))
         case "/api/presets/delete":
             guard let id = body["id"] as? Int else { return text(400, "Parâmetros inválidos") }
             store.deletePreset(id: id)

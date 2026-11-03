@@ -164,3 +164,53 @@ public struct DeathRisk {
         return (min(4, max(0.25, (seen + 1) / (predicted + 1))), runs.count)
     }
 }
+
+/// The moments someone fell below 40% of the health this hunt: when, how low, how long until back above 60%, and
+/// what was hitting the party in the seconds before the lowest point. Shows why the death risk is what it is.
+public struct DangerTracker {
+    static let below = 0.40, recovered = 0.60
+    static let keep = 30
+    struct Dip { var start: Date; var at: Date; var lowest: Double; var health: Double; var maxHealth: Double; var vocation: String; var hits: [String: Any]? }
+    private var open: [Int: Dip] = [:]
+    private(set) var moments: [[String: Any]] = []
+    private(set) var count = 0
+
+    public init() {}
+
+    /// One posted frame; `hits` gives what hit the party just before (asked only when a member is at a new low).
+    public mutating func add(party: [[String: Any]], at date: Date, hits: () -> [String: Any]?) {
+        for (position, member) in party.enumerated() {
+            guard let hp = HuntInsights.number(member["hp"]), let maxHp = HuntInsights.number(member["maxHp"]), maxHp > 0 else { continue }
+            let share = hp / maxHp
+            if var dip = open[position] {
+                if share < dip.lowest { dip.lowest = share; dip.health = hp; dip.at = date; dip.hits = hits() }
+                if share >= Self.recovered { close(dip, position: position, end: date); open[position] = nil } else { open[position] = dip }
+            } else if share < Self.below {
+                open[position] = Dip(start: date, at: date, lowest: share, health: hp, maxHealth: maxHp,
+                                     vocation: member["vocation"] as? String ?? "", hits: hits())
+            }
+        }
+    }
+
+    private mutating func close(_ dip: Dip, position: Int, end: Date?) {
+        count += 1
+        moments.append(Self.json(dip, position: position, end: end))
+        if moments.count > Self.keep { moments.removeFirst(moments.count - Self.keep) }
+    }
+
+    static func json(_ dip: Dip, position: Int, end: Date?) -> [String: Any] {
+        var out: [String: Any] = ["at": dip.at.timeIntervalSince1970 * 1000, "position": position, "vocation": dip.vocation,
+                                  "lowest": (dip.lowest * 1000).rounded() / 1000, "health": Int(dip.health), "maxHealth": Int(dip.maxHealth)]
+        if let end { out["seconds"] = Int(end.timeIntervalSince(dip.start).rounded()) } else { out["ongoing"] = true }
+        if let creatures = dip.hits?["creatures"] as? [[String: Any]], !creatures.isEmpty { out["creatures"] = Array(creatures.prefix(3)) }
+        return out
+    }
+
+    /// The moments, newest first, with a dip still going on; and how many there were in the hunt.
+    public func summary() -> [String: Any]? {
+        let current = open.map { Self.json($0.value, position: $0.key, end: nil) }
+        guard count + current.count > 0 else { return nil }
+        return ["count": count + current.count,
+                "moments": (moments + current).sorted { (HuntInsights.number($0["at"]) ?? 0) > (HuntInsights.number($1["at"]) ?? 0) }]
+    }
+}

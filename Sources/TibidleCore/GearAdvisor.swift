@@ -339,6 +339,11 @@ public struct HitsTracker {
         ]
     }
 
+    /// What hit the party in the last `seconds`, in the same shape as the death window.
+    func latest(seconds: Double, now: Date) -> [String: Any] {
+        Self.window(recent.filter { now.timeIntervalSince($0.date) <= seconds }, dead: [])
+    }
+
     /// What hit the party in the tallies before a death: the creatures by damage, the elements, the knight's
     /// melee and each position's spell damage, and who died.
     static func window(_ tallies: [(date: Date, tally: [String: Any])], dead: [Int]) -> [String: Any] {
