@@ -526,17 +526,18 @@ public enum DashboardPage {
       } else if (a.benchmark || a.bestiary) items.push(['hunt', 'Hunt', 'histórico e bestiário', false]);
       const p = a.levelPlan;
       if (p) items.push(['level', `Nível ${p.next}`, p.etaMs ? `em ~${hm(p.etaMs)}` : `faltam ${kk(p.needed)} XP`, false]);
-      else if ((a.skillTraining || []).length) {
-        const next = a.skillTraining.flatMap((m) => m.skills).sort((x, y) => num(x.nextInSec) - num(y.nextInSec))[0];
-        items.push(['level', 'Próxima skill', `${SKILL_NAMES[next.skill] || next.skill} ${next.level + 1} em ~${hm(num(next.nextInSec) * 1000)}`, false]);
-      }
       if (a.deathRisk || a.dangers || a.healing) {
         const r = a.deathRisk, n = a.dangers ? num(a.dangers.count) : 0;
         const parts = [r ? `${riskPercent(r.perHour)}%/h` : null, n ? plural(n, 'susto', 'sustos') : null].filter(Boolean);
         items.push(['risk', 'Risco', parts.join(' · ') || 'cura e supplies', !!r && num(r.perHour) >= 0.05]);
       }
       const sk = a.skills;
-      if (sk && sk.members && sk.members.length) {
+      // In training (no spells to judge) the button shows the next skill level instead.
+      if ((a.skillTraining || []).length && (a.training || !(sk && sk.members && sk.members.length))) {
+        const next = a.skillTraining.flatMap((m) => m.skills).sort((x, y) => num(x.nextInSec) - num(y.nextInSec))[0];
+        items.push(['skills', 'Skills', `${SKILL_NAMES[next.skill] || next.skill} ${next.level + 1} em ~${hm(num(next.nextInSec) * 1000)}`, false]);
+      } else if (a.training) items.push(['skills', 'Skills', 'ritmo do treino', false]);
+      else if (sk && sk.members && sk.members.length) {
         const tips = sk.members.reduce((sum, m) => sum + (m.suggestions || []).length, 0);
         const total = sk.members.reduce((sum, m) => sum + num(m.dps), 0);
         items.push(['skills', 'Skills', tips ? plural(tips, 'sugestão', 'sugestões') : `~${fmt(total)} dano/s`, false]);
@@ -675,7 +676,7 @@ public enum DashboardPage {
     }
     function panelBody(a, tab) {
       const parts = tab === 'hunt' ? [insights(a), benchmark(a), bestiary(a), kills(a, 8), drops(a)]
-        : tab === 'level' ? [levelPlan(a), skillTraining(a), whereToHunt(a)] : tab === 'risk' ? [riskBody(a)] : tab === 'skills' ? [skillsBody(a)] : tab === 'gear' ? [gearBody(a)] : [missions(a)];
+        : tab === 'level' ? [levelPlan(a), whereToHunt(a)] : tab === 'risk' ? [riskBody(a)] : tab === 'skills' ? [skillTraining(a), skillsBody(a)] : tab === 'gear' ? [gearBody(a)] : [missions(a)];
       const shown = parts.filter(Boolean);
       return shown.length ? el('div', null, shown) : el('div', { class: 'empty' }, 'Sem dados para esta conta agora.');
     }
@@ -698,7 +699,12 @@ public enum DashboardPage {
     function skillsBody(a) {
       const d = a.skills;
       const body = el('div');
-      if (!d || !d.members) return el('div', { class: 'empty' }, 'Sem dados de skills no momento (a conta precisa estar caçando).');
+      if (!d || !d.members) {
+        if ((a.skillTraining || []).length) return null;
+        return el('div', { class: 'empty' }, a.training
+          ? 'Treinando: o ritmo de cada skill aparece aqui depois de alguns minutos, assim que o % dela andar 2%.'
+          : 'Sem dados de skills no momento (a conta precisa estar caçando ou treinando).');
+      }
       for (const m of d.members) {
         const top = Math.max(1, ...(m.skills || []).map((s) => num(s.dps)));
         const box = el('div', { class: 'sk-member' }, el('div', { class: 'sk-top' }, el('b', null, `${m.name} · ${vocation(m.vocation)}`),
