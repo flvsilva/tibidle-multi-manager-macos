@@ -31,6 +31,8 @@ public final class DashboardStore {
     private var hits: [Int: HitsTracker] = [:]
     private var risk: [Int: DeathRisk] = [:]
     private var dangers: [Int: DangerTracker] = [:]
+    /// Skill progress per account; kept over reconnects (it only goes up), started over with each hunt.
+    private var training: [Int: SkillTraining] = [:]
     /// Attention advice the user chose to ignore: mute key → the hunt it was muted in (its start), 0 for always.
     private var mutes: [String: Double] = [:]
 
@@ -155,6 +157,7 @@ public final class DashboardStore {
             hits[account] = HitsTracker()
             risk[account] = DeathRisk()
             dangers[account] = DangerTracker()
+            training[account] = SkillTraining()
             entry["bestiarySnap"] = 0.0
         case "resume", "frame":
             if type == "resume", let battle = data["battleConfigs"] { entry["battle"] = battle }
@@ -171,7 +174,10 @@ public final class DashboardStore {
                 let tracker = hits[account]
                 dangers[account, default: DangerTracker()].add(party: party, at: date) { tracker?.latest(seconds: 15, now: date) }
             }
-            if let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] { vitals[account, default: VitalsTracker()].add(party: party) }
+            if let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] {
+                vitals[account, default: VitalsTracker()].add(party: party)
+                training[account, default: SkillTraining()].add(party: party, at: date)
+            }
             entry["status"] = "hunting"
             if let huntId = data["huntId"] { entry["huntId"] = huntId }
             if let state = data["state"] { entry["state"] = state }
@@ -378,6 +384,7 @@ public final class DashboardStore {
             }
             if entry["status"] as? String == "hunting", let moments = dangers[index]?.summary() { out["dangers"] = moments }
             if entry["status"] as? String == "hunting", let healing = healing(index, entry) { out["healing"] = healing }
+            if entry["status"] as? String == "hunting", let skills = training[index]?.summary() { out["skillTraining"] = skills }
             out["battle"] = nil
             if entry["status"] as? String == "hunting", entry["training"] as? Bool != true, let bestiary = bestiaryProgress(entry) {
                 out["bestiary"] = bestiary

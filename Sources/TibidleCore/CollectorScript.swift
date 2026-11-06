@@ -92,6 +92,11 @@ public enum CollectorScript {
           magic: num(isObject(sk.magic) ? sk.magic.bonus : undefined),
           shielding: num(isObject(sk.shielding) ? sk.shielding.bonus : undefined),
         };
+        out.skillProgress = {
+          melee: num(isObject(sk.melee) ? sk.melee.pct : undefined), distance: num(isObject(sk.distance) ? sk.distance.pct : undefined),
+          magic: num(isObject(sk.magic) ? sk.magic.pct : undefined),
+          shielding: num(isObject(sk.shielding) ? sk.shielding.pct : undefined),
+        };
         out.weaponAttack = weaponAttack(m.equipment);
         out.gear = gear(m.equipment);
         out.kit = Array.isArray(m.kit) ? m.kit.slice(0, 24).map((k) => pick(k, ['name', 'mana', 'cooldownMs'])) : [];
