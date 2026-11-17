@@ -56,7 +56,13 @@ class FlatButton: NSButton {
     var padding = NSSize(width: 14, height: 7)
     private var hovering = false { didSet { refresh() } }
 
-    override var title: String { didSet { refresh() } }
+    /// The label alone. NSButton's own title turns into the attributed title's text ("● Conta 1") once the dot
+    /// is drawn, so building from it would add one more dot (and widen the button) on every refresh.
+    private var label = ""
+    override var title: String {
+        get { label }
+        set { label = newValue; super.title = newValue; refresh() }
+    }
     override var isEnabled: Bool { didSet { refresh() } }
 
     convenience init(title: String, target: AnyObject?, action: Selector?) {

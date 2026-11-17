@@ -80,8 +80,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         super.init(window: window)
         window.delegate = self
         buildInterface()
-        if !window.setFrameUsingName("MainWindow"), let screen = window.screen ?? NSScreen.main {
-            window.setFrame(screen.visibleFrame, display: false)
+        if let screen = window.screen ?? NSScreen.main {
+            // A saved frame bigger than the screen (or off it) comes back to the screen's visible area.
+            let visible = screen.visibleFrame
+            if !window.setFrameUsingName("MainWindow") || window.frame.width > visible.width || window.frame.height > visible.height
+                || !visible.intersects(window.frame) {
+                window.setFrame(visible, display: false)
+            }
         }
         window.setFrameAutosaveName("MainWindow")
 
