@@ -1,22 +1,33 @@
 import Foundation
 import Network
 
-/// Minimal HTTP server for the dashboard, open to the local network. Reads are open; the only writes
-/// (the preset library) are accepted from this Mac alone.
+/// Minimal HTTP server for the dashboard, open to the local network unless `localOnly`. Reads are open; the only
+/// writes (the preset library, ignored advice) are accepted from this Mac alone.
 public final class DashboardServer {
     public static let preferredPort: UInt16 = 8787
+    /// A connection is closed after this long, even mid-transfer: generous for a phone on weak Wi-Fi.
+    static let connectionTimeout: TimeInterval = 30
 
     private let store: DashboardStore
     private let queue = DispatchQueue(label: "TibidleMultiManager.DashboardServer")
     private var listener: NWListener?
+    /// Only this Mac (loopback) may connect; set before `start` or through `restart(localOnly:)`.
+    public private(set) var localOnly: Bool
     public private(set) var port: UInt16?
     public var onReady: ((UInt16) -> Void)?
 
-    public init(store: DashboardStore) { self.store = store }
+    public init(store: DashboardStore, localOnly: Bool = false) {
+        self.store = store
+        self.localOnly = localOnly
+    }
 
     public func start(port: UInt16 = DashboardServer.preferredPort, attempts: Int = 10) {
+        let parameters = NWParameters.tcp
+        // A quick relaunch finds the port still in TIME_WAIT: reuse it, so the phone's bookmark keeps working.
+        parameters.allowLocalEndpointReuse = true
+        if localOnly { parameters.requiredInterfaceType = .loopback }
         guard attempts > 0, let nwPort = NWEndpoint.Port(rawValue: port),
-              let listener = try? NWListener(using: .tcp, on: nwPort) else { return }
+              let listener = try? NWListener(using: parameters, on: nwPort) else { return }
         self.listener = listener
         listener.newConnectionHandler = { [weak self] connection in self?.serve(connection) }
         listener.stateUpdateHandler = { [weak self] state in
@@ -35,10 +46,27 @@ public final class DashboardServer {
 
     public func stop() { listener?.cancel() }
 
+    /// Switches between this Mac only and the local network; the server comes back on the preferred port.
+    public func restart(localOnly: Bool) {
+        queue.async { [self] in
+            self.localOnly = localOnly
+            listener?.cancel()
+            listener = nil
+            start()
+        }
+    }
+
     private func serve(_ connection: NWConnection) {
+        // The interface requirement already keeps the network out; this is the guarantee.
+        if localOnly && !Self.isLoopback(connection) { connection.cancel(); return }
         connection.start(queue: queue)
-        queue.asyncAfter(deadline: .now() + 10) { connection.cancel() }
+        queue.asyncAfter(deadline: .now() + Self.connectionTimeout) { connection.cancel() }
         receive(connection, buffer: Data())
+    }
+
+    private func send(_ connection: NWConnection, _ response: HTTPResponse, headers: [String: String] = [:], head: Bool = false) {
+        let gzip = (headers["accept-encoding"] ?? "").lowercased().contains("gzip")
+        connection.send(content: response.serialized(gzip: gzip, includeBody: !head), completion: .contentProcessed { _ in connection.cancel() })
     }
 
     private static func isLoopback(_ connection: NWConnection) -> Bool {
@@ -65,11 +93,18 @@ public final class DashboardServer {
                     headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
                 }
             }
-            let length = Int(headers["content-length"] ?? "") ?? 0
+            var length = 0
+            if let declared = headers["content-length"] {
+                // A negative length would slice the buffer backwards: a crash any device on the network could cause.
+                guard let parsed = Int(declared), parsed >= 0 else {
+                    send(connection, HTTPResponse(status: 400, contentType: "text/plain", body: Data()))
+                    return
+                }
+                length = parsed
+            }
             let bodyStart = end.upperBound
             if length > DashboardRouter.maxBody {
-                connection.send(content: HTTPResponse(status: 413, contentType: "text/plain", body: Data()).serialized(),
-                                completion: .contentProcessed { _ in connection.cancel() })
+                send(connection, HTTPResponse(status: 413, contentType: "text/plain", body: Data()))
                 return
             }
             if buffer.count - bodyStart < length {
@@ -82,9 +117,7 @@ public final class DashboardServer {
                                                       body: buffer[bodyStart..<(bodyStart + length)], isLocal: Self.isLoopback(connection)),
                                           store: store)
                 : HTTPResponse(status: 400, contentType: "text/plain", body: Data())
-            var payload = response.serialized()
-            if parts.first == "HEAD" { payload = payload.prefix(payload.count - response.body.count) }
-            connection.send(content: payload, completion: .contentProcessed { _ in connection.cancel() })
+            send(connection, response, headers: headers, head: parts.first == "HEAD")
         }
     }
 

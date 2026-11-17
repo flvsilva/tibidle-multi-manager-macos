@@ -8,11 +8,20 @@ public enum DashboardPage {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Tibidle Hunts</title>
+    <link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%238a6a1f'/%3E%3C/svg%3E">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Tibidle">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
     <style>
     :root {
       color-scheme: light;
       --page: #f6f5f1; --surface: #fcfcfb; --surface-2: #f0efea; --border: rgba(11,11,11,.10);
-      --ink: #0b0b0b; --ink-2: #52514e; --muted: #77756f; --grid: #e1e0d9; --axis: #c3c2b7;
+      --ink: #0b0b0b; --ink-2: #52514e; --muted: #6b6963; --grid: #e1e0d9; --axis: #c3c2b7;
       --accent: #8a6a1f; --accent-bg: #f3e7c6;
       --s0: #2a78d6; --s1: #eb6834; --s2: #1baf7a; --s3: #eda100;
       --good: #0ca30c; --good-text: #006300; --warning: #b77800; --warn-text: #8a5a00; --critical: #d03b3b; --bad-text: #b02a2a;
@@ -102,8 +111,15 @@ public enum DashboardPage {
     .attention .ok { color: var(--muted); font-size: 12px; }
     .linkbtn { color: var(--ink-2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px; font-size: 12px; text-decoration: none; }
     .linkbtn:hover { color: var(--ink); }
-    tr.run { cursor: pointer; } tr.run:hover td { background: var(--surface-2); }
+    tr.run { cursor: pointer; } tr.run:hover td, tr.run:focus-visible td { background: var(--surface-2); }
+    tr.run:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     tr.detail td { white-space: normal; background: var(--surface-2); font-size: 12px; color: var(--ink-2); }
+    /* The detail spans the 13 columns of a wide table: on a phone it stays in view while the table scrolls sideways. */
+    .detail-inner { position: sticky; left: 8px; width: min(100%, calc(100vw - 72px)); }
+    .pager { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+    .pager button { font: inherit; font-size: 12px; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+    .pager button:disabled { opacity: .45; cursor: default; }
+    .cell-sub { display: block; color: var(--muted); font-size: 11px; white-space: normal; }
     .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 6px 16px; }
     .detail-grid b { color: var(--ink); font-weight: 600; }
     td.clip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
@@ -161,7 +177,9 @@ public enum DashboardPage {
     .modal-head h2 { margin: 0; flex: 1; font-size: 16px; font-weight: 650; }
     .modal-head button { font: inherit; font-size: 20px; line-height: 1; padding: 2px 8px; color: var(--ink-2); background: none; border: 0; cursor: pointer; border-radius: 6px; }
     .modal-head button:hover { background: var(--surface-2); }
-    .modal-body { padding: 14px 16px 16px; overflow-y: auto; }
+    .modal-body { padding: 14px 16px 16px; overflow-y: auto; overscroll-behavior: contain; }
+    .modal { overscroll-behavior: contain; }
+    body.modal-open { overflow: hidden; }
     .sk-member { padding: 12px; margin-bottom: 12px; background: var(--surface-2); border-radius: 10px; }
     .sk-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 8px; }
     .sk-top b { font-size: 15px; }
@@ -206,7 +224,25 @@ public enum DashboardPage {
     .cmp-group + .cmp-group { margin-top: 16px; }
     .cmp-group h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
     td .swatch { display: inline-block; margin-right: 6px; vertical-align: 0; }
-    @media (max-width: 520px) { main { padding: 14px 16px 40px; } .summary b { font-size: 17px; } td.clip { max-width: 140px; } .hero b { font-size: 21px; } .stats { grid-template-columns: repeat(2, 1fr); } }
+    /* Last good data older than 10 s, or the manager unreachable: the numbers stay but look old. */
+    body.stale #cards, body.stale #summary, body.stale #attention, body.stale #compare-section { opacity: .5; transition: opacity .3s; }
+    .tap { cursor: pointer; }
+    .tap:hover { text-decoration: underline dotted; }
+    .member.tap:hover { text-decoration: none; }
+    .member.tap:hover span { color: var(--ink); }
+    .member-more { grid-column: 1 / -1; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; margin-bottom: 2px; }
+    .c-warn, .c-more { display: none; }
+    .c-more { width: 100%; margin-top: 10px; font: inherit; font-size: 12px; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px; cursor: pointer; }
+    .chart .mark-death { fill: var(--critical); }
+    .marks-note { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    @media (max-width: 520px) {
+      main { padding: 14px 16px 40px; } .summary b { font-size: 17px; } td.clip { max-width: 140px; } .hero b { font-size: 21px; } .stats { grid-template-columns: repeat(2, 1fr); }
+      /* Phone: each card shows status, XP/h, profit/h, risk and its top warning; the rest opens with a tap. */
+      .card.compact .cx { display: none; }
+      .card.compact .c-warn { display: block; }
+      .c-more { display: block; }
+      .card.compact .hero { margin-bottom: 4px; }
+    }
     @media (forced-colors: active) { .swatch, .legend i, .status i { forced-color-adjust: none; } }
     </style>
     </head>
@@ -262,7 +298,8 @@ public enum DashboardPage {
           <div class="chart" id="chart-xp"><h3>XP por hora</h3></div>
           <div class="chart" id="chart-profit"><h3>Lucro por hora (loot − supplies)</h3></div>
         </div>
-        <details><summary>Ver dados em tabela</summary><div class="table-wrap" id="series-table"></div></details>
+        <div class="marks-note" id="marks-note" hidden></div>
+        <details id="series-details"><summary>Ver dados em tabela</summary><div class="table-wrap" id="series-table"></div></details>
       </section>
 
       <section class="section">
@@ -297,8 +334,16 @@ public enum DashboardPage {
       </section>
 
       <section class="section">
-        <div class="toolbar"><h2>Hunts encerradas</h2><a class="linkbtn" href="/api/hunts.csv" download>CSV</a></div>
+        <div class="toolbar"><h2>Hunts encerradas</h2>
+          <select id="hunts-account" aria-label="Conta"><option value="">Todas as contas</option></select>
+          <select id="hunts-map" aria-label="Mapa"><option value="">Todos os mapas</option></select>
+          <select id="hunts-min" aria-label="Duração mínima">
+            <option value="0">Qualquer duração</option><option value="10">10+ min</option><option value="30">30+ min</option><option value="60">1h+</option><option value="120">2h+</option>
+          </select>
+          <a class="linkbtn" href="/api/hunts.csv" download>CSV</a>
+        </div>
         <div class="table-wrap" id="hunts"></div>
+        <div class="pager" id="hunts-pager" hidden></div>
       </section>
     </main>
     <div class="tip" id="tip"></div>
@@ -311,6 +356,7 @@ public enum DashboardPage {
     const STATUS = {
       hunting: ['Caçando', 'var(--good)'], city: ['Na cidade', 'var(--axis)'], offline: ['App sem conexão', 'transparent'],
       replaced: ['Sessão em outro lugar', 'var(--warning)'],
+      stale: ['Sem dados', 'var(--warning)'], crashed: ['Página travou', 'var(--critical)'],
     };
     const MISSION = {
       claimed:   ['✓', 'Resgatada', 'var(--good-text)'],
@@ -328,16 +374,60 @@ public enum DashboardPage {
     const VOC = { knight: 'Knight', paladin: 'Paladin', sorcerer: 'Sorcerer', druid: 'Druid', monk: 'Monk' };
     let rangeHours = 12, lastAccounts = [], lastHistory = null;
 
+    // Handlers go in as properties (onclick: fn), so morph() can hand the fresh closure to the node it keeps.
     function el(tag, props, ...children) {
       const node = document.createElement(tag);
       if (props) for (const [k, v] of Object.entries(props)) {
         if (k === 'style') Object.assign(node.style, v);
         else if (k === 'class') node.className = v;
+        else if (k.startsWith('on') && typeof v === 'function') node[k] = v;
         else node.setAttribute(k, v);
       }
       for (const c of children.flat()) if (c != null && c !== false) node.append(c instanceof Node ? c : String(c));
       return node;
     }
+
+    // ---- in-place updates ----
+    // The page refreshes every few seconds; rebuilding the DOM each time loses clicks halfway, text selection, focus,
+    // open tooltips and scroll. morph() turns the nodes on screen into the new ones and keeps every node it can.
+    const HANDLERS = ['onclick', 'onkeydown', 'ontoggle', 'onchange'];
+    const keyOf = (n) => n.nodeType === 1 ? n.getAttribute('data-key') : null;
+    const compatible = (a, b) => a.nodeType === b.nodeType && (a.nodeType !== 1 || (a.tagName === b.tagName && keyOf(a) === keyOf(b)));
+    function syncAttrs(a, b) {
+      // A details element keeps whatever the user opened or closed.
+      const skip = (name) => name === 'open' && a.tagName === 'DETAILS';
+      for (const { name } of [...a.attributes]) if (!b.hasAttribute(name) && !skip(name)) a.removeAttribute(name);
+      for (const { name, value } of [...b.attributes]) if (a.getAttribute(name) !== value && !skip(name)) a.setAttribute(name, value);
+    }
+    function morphNode(a, b) {
+      if (a.nodeType !== 1) { if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; return; }
+      syncAttrs(a, b);
+      for (const h of HANDLERS) if (a[h] !== b[h]) a[h] = b[h];
+      morphChildren(a, b);
+    }
+    function morphChildren(parent, next) {
+      const keyed = new Map();
+      for (const n of parent.childNodes) { const k = keyOf(n); if (k != null) keyed.set(k, n); }
+      let cursor = parent.firstChild;
+      for (const nn of [...next.childNodes]) {
+        const k = keyOf(nn);
+        let match = null;
+        if (k != null) { match = keyed.get(k) || null; keyed.delete(k); }
+        else if (cursor && keyOf(cursor) == null && compatible(cursor, nn)) match = cursor;
+        if (match && !compatible(match, nn)) match = null;
+        if (!match) { parent.insertBefore(nn, cursor); continue; }
+        if (match === cursor) cursor = cursor.nextSibling; else parent.insertBefore(match, cursor);
+        morphNode(match, nn);
+      }
+      while (cursor) { const after = cursor.nextSibling; cursor.remove(); cursor = after; }
+    }
+    // Puts these nodes (or strings) in the container, reusing what is already there.
+    function update(container, ...nodes) {
+      const next = document.createElement(container.tagName);
+      for (const c of nodes.flat()) if (c != null && c !== false) next.append(c instanceof Node ? c : String(c));
+      morphChildren(container, next);
+    }
+    const setText = (node, text) => { if (node.textContent !== text) node.textContent = text; };
     const svg = (tag, attrs) => {
       const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
       for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
@@ -345,16 +435,20 @@ public enum DashboardPage {
     };
     const num = (v) => { const n = typeof v === 'string' ? Number(v) : v; return Number.isFinite(n) ? n : 0; };
     const full = new Intl.NumberFormat('pt-BR');
-    const short = new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 });
-    const fmt = (v) => Math.abs(num(v)) >= 100000 ? short.format(num(v)) : full.format(Math.round(num(v)));
+    // Decimals always with a comma: 1,5h, never 1.5h.
+    const dec = (v, digits = 1) => num(v).toLocaleString('pt-BR', { maximumFractionDigits: digits });
+    // One short style, the game's: 950, 12.345, 166k, 1,2kk.
+    const kk = (v) => { const n = num(v), a = Math.abs(n); return a >= 1e6 ? `${dec(n / 1e6)}kk` : a >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n)); };
+    // From 10k up in the game's k/kk style, so a column never mixes "390k" with "60.000".
+    const fmt = (v) => Math.abs(num(v)) >= 10000 ? kk(v) : full.format(Math.round(num(v)));
     const signed = (v) => (num(v) > 0 ? '+' : '') + fmt(v);
-    // Narrow tables: 166k, 1,2kk, 5h47.
-    const kk = (v) => { const n = num(v), a = Math.abs(n); return a >= 1e6 ? `${(n / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}kk` : a >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n)); };
     const kkSigned = (v) => (num(v) > 0 ? '+' : '') + kk(v);
-    const hm = (ms) => { const m = Math.max(0, Math.round(num(ms) / 60000)); return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`; };
+    // From 48 h on, days: 3d 4h instead of 76h.
+    const days = (m) => { const h = Math.floor(m / 60); return `${Math.floor(h / 24)}d ${h % 24}h`; };
+    const hm = (ms) => { const m = Math.max(0, Math.round(num(ms) / 60000)); return m >= 2880 ? days(m) : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`; };
     const duration = (ms) => {
       const m = Math.max(0, Math.floor(num(ms) / 60000)), h = Math.floor(m / 60);
-      return h ? `${h}h ${String(m % 60).padStart(2, '0')}min` : `${m}min`;
+      return m >= 2880 ? days(m) : h ? `${h}h ${String(m % 60).padStart(2, '0')}min` : `${m}min`;
     };
     const time = (ms) => new Date(ms).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const dateTime = (ms) => new Date(ms).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -367,10 +461,7 @@ public enum DashboardPage {
     const perKXp = (profit, xp) => ratio(profit, num(xp) / 1000);
     const vocation = (v) => VOC[String(v || '').toLowerCase()] || v || '';
 
-    const until = (ms) => {
-      const m = Math.max(0, Math.floor((num(ms) - Date.now()) / 60000)), h = Math.floor(m / 60);
-      return h ? `${h}h ${String(m % 60).padStart(2, '0')}min` : `${m}min`;
-    };
+    const until = (ms) => duration(num(ms) - Date.now());
 
     const ELEMENT = { COMBAT_PHYSICALDAMAGE: 'físico', COMBAT_FIREDAMAGE: 'fogo', COMBAT_ENERGYDAMAGE: 'energia', COMBAT_EARTHDAMAGE: 'terra',
       COMBAT_ICEDAMAGE: 'gelo', COMBAT_HOLYDAMAGE: 'sagrado', COMBAT_DEATHDAMAGE: 'morte', COMBAT_LIFEDRAIN: 'dreno de vida',
@@ -404,22 +495,25 @@ public enum DashboardPage {
       return el('div', { class: 'bestiary' }, el('div', { class: 'mhead' }, `Histórico nesta hunt no nível ${b.level} (±${b.range})`),
         el('table', { class: 'mini' },
           el('thead', null, el('tr', null, el('th', null, 'Conta'), ['Lucro/h', 'Supplies/h', 'Kills/h', 'Horas'].map((h) => el('th', { class: 'n' }, h)))),
-          el('tbody', null, b.rows.map((r) => el('tr', { title: `${r.runs} hunt(s), nível ${r.levels}, recebido ${fmt(r.damageTakenPerHour)}/h` },
-            el('td', null, el('span', { class: 'swatch' + (r.account === a.index ? ' me' : ''), style: { background: SERIES[r.account] } }), r.label),
+          el('tbody', null, b.rows.map((r) => el('tr', null,
+            el('td', null, el('span', { class: 'swatch' + (r.account === a.index ? ' me' : ''), style: { background: SERIES[r.account] } }), r.label,
+              el('span', { class: 'cell-sub' }, `${plural(num(r.runs), 'hunt', 'hunts')} · nível ${r.levels} · recebido ${fmt(r.damageTakenPerHour)}/h`)),
             cell(signed(r.profitPerHour), r.profitPerHour >= 0 ? 'pos' : 'neg'), cell(fmt(r.suppliesPerHour)), cell(fmt(r.killsPerHour)),
-            cell(r.hours.toLocaleString('pt-BR')))))));
+            cell(dec(r.hours)))))));
     }
 
-    // The account's best recent hunt on this map and what changed in the battle setup since then.
+    // What the account's best setup usually makes on this map (a median, not a lucky hunt) and what changed since.
     function insights(a) {
       const d = a.insights;
       if (!d || !d.reference) return null;
       const r = d.reference;
-      const box = el('div', { class: 'bestiary' }, el('div', { class: 'mhead' }, 'Comparado à sua melhor hunt recente aqui'));
+      const box = el('div', { class: 'bestiary' }, el('div', { class: 'mhead' }, 'Comparado ao que o seu melhor setup costuma render aqui'));
       const drop = d.drop != null && d.drop >= 0.2;
-      box.append(el('div', { class: 'madvice' }, `${dateTime(r.endedAt)} · nível ${r.levels} · ${r.hours.toLocaleString('pt-BR')}h · ${signed(r.profitPerHour)}/h`,
+      box.append(el('div', { class: 'madvice' },
+        `${signed(r.profitPerHour)}/h${num(r.runs) >= 2 ? ` (mediana de ${r.runs} hunts com o mesmo setup)` : ' (mediana das hunts recentes)'}`,
         d.profitPerHour != null ? el('span', { class: drop ? 'warn-text' : '' },
           ` → agora ${signed(d.profitPerHour)}/h${d.drop != null ? ` (${d.drop > 0 ? '−' : '+'}${Math.round(Math.abs(d.drop) * 100)}%)` : ''}`) : null));
+      box.append(el('div', { class: 'madvice' }, `Hunt de referência: ${dateTime(r.endedAt)} · nível ${r.levels} · ${dec(r.hours)}h`));
       if (r.takenPerKill != null && d.takenPerKill != null) {
         const worse = d.takenPerKill > r.takenPerKill * 1.15;
         box.append(el('div', { class: 'madvice' + (worse ? ' warn-text' : '') },
@@ -441,22 +535,30 @@ public enum DashboardPage {
       }
       if (!changes.length) box.append(el('div', { class: 'madvice' }, 'Mesmo setup de batalha daquela hunt.'));
       else {
-        const key = `ins-${a.index}`;
-        const details = el('details', openDetails.has(key) ? { open: '' } : null,
+        box.append(keptDetails(`ins-${a.index}`,
           el('summary', null, `O que mudou no setup desde aquela hunt (${changes.map((c) => c.label).join(', ')})`),
-          changes.map((c) => el('div', { class: 'madvice' }, el('b', null, c.label), el('ul', { style: { margin: '2px 0 4px', paddingLeft: '18px' } }, c.differences.map((x) => el('li', null, x))))));
-        details.addEventListener('toggle', () => { if (details.open) openDetails.add(key); else openDetails.delete(key); });
-        box.append(details);
+          changes.map((c) => el('div', { class: 'madvice' }, el('b', null, c.label), el('ul', { style: { margin: '2px 0 4px', paddingLeft: '18px' } }, c.differences.map((x) => el('li', null, x)))))));
       }
       if (drop && changes.length) box.append(el('div', { class: 'alert warn' }, 'O lucro caiu e o setup é outro: comece revertendo essas mudanças.'));
-      const view = el('button', { class: 'pr-btn', type: 'button', style: { marginTop: '6px' } }, 'Ver setup completo daquela hunt / salvar como preset');
-      view.addEventListener('click', async () => {
-        let h = lastHunts.find((x) => x.id === r.id);
-        if (!h) { await refreshHunts(); h = lastHunts.find((x) => x.id === r.id); }
-        if (h) openSetup(h);
-      });
+      // The reference may be older than the hunts loaded in the table: then it comes from the server by id.
+      const view = el('button', { class: 'pr-btn', type: 'button', style: { marginTop: '6px' }, onclick: async () => {
+        let h = huntIndex.get(r.id);
+        if (!h) {
+          try { h = (await getJSON(`/api/hunt?id=${encodeURIComponent(r.id)}`)).hunt; } catch (_) { h = null; }
+          if (h) rememberHunt(h);
+        }
+        setupError.set(a.index, h ? null : r.id);
+        if (h) openSetup(h); else renderPanel();
+      } }, 'Ver setup completo daquela hunt / salvar como preset');
       box.append(view);
+      if (setupError.get(a.index) === r.id) box.append(el('div', { class: 'madvice warn-text' }, 'Não foi possível carregar aquela hunt. Tente de novo em alguns segundos.'));
       return box;
+    }
+    const setupError = new Map();
+    // A details element whose open state survives a rebuild of its section.
+    function keptDetails(key, ...children) {
+      return el('details', { 'data-key': key, ...(openDetails.has(key) ? { open: '' } : {}),
+        ontoggle: (e) => { if (e.currentTarget.open) openDetails.add(key); else openDetails.delete(key); } }, ...children);
     }
 
     // Next level: when on this hunt, and on the other maps this account hunted near this level (and the gold on the way).
@@ -469,8 +571,9 @@ public enum DashboardPage {
       if (maps.length > 1 || (maps.length === 1 && !maps[0].current)) {
         box.append(el('div', { class: 'table-wrap' }, el('table', { class: 'mini' },
           el('thead', null, el('tr', null, el('th', null, 'Hunt'), ['XP/h', 'Lucro/h', 'Tempo', 'Gold'].map((h) => el('th', { class: 'n' }, h)))),
-          el('tbody', null, maps.map((m) => el('tr', { title: `${m.hours.toLocaleString('pt-BR')}h de histórico perto deste nível` },
-            el('td', { style: { whiteSpace: 'normal' } }, m.title, m.current ? ' (atual)' : '', m.limited ? el('div', { class: 'muted-text', style: { fontSize: '11px' } }, 'acesso limitado') : null),
+          el('tbody', null, maps.map((m) => el('tr', null,
+            el('td', { style: { whiteSpace: 'normal' } }, m.title, m.current ? ' (atual)' : '',
+              el('span', { class: 'cell-sub' }, `${dec(m.hours)}h de histórico perto deste nível${m.limited ? ' · acesso limitado' : ''}`)),
             el('td', { class: 'n' }, kk(m.xpPerHour)), el('td', { class: 'n ' + (m.profitPerHour >= 0 ? 'pos' : 'neg') }, kkSigned(m.profitPerHour)),
             el('td', { class: 'n' }, hm(m.etaMs)), el('td', { class: 'n ' + (m.goldToLevel >= 0 ? 'pos' : 'neg') }, kkSigned(m.goldToLevel))))))));
         box.append(el('div', { class: 'sk-foot', style: { marginTop: '4px' } }, 'Do seu histórico nas últimas 2 semanas, perto deste nível. Tempo e gold: até subir de nível naquela hunt (gold negativo é o custo de subir mais rápido).'));
@@ -494,7 +597,7 @@ public enum DashboardPage {
             el('td', null, SKILL_NAMES[sk.skill] || sk.skill),
             el('td', { class: 'n' }, `${sk.level} (${Math.round(num(sk.pct))}%)`),
             el('td', { class: 'n' }, `+${Math.round(num(sk.gained))}% em ${sk.minutes} min`),
-            el('td', { class: 'n' }, `${num(sk.perHour).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`),
+            el('td', { class: 'n' }, `${dec(sk.perHour)}%`),
             el('td', { class: 'n' }, `${sk.level + 1} em ~${hm(num(sk.nextInSec) * 1000)}`)))))),
         el('div', { class: 'sk-foot', style: { marginTop: '4px' } }, 'Pelo avanço dos últimos 10 min. O jogo mostra o progresso em % inteiros: em skill lenta o app olha mais para trás (até 2 h) até ela andar 2%. Cada nível de skill demora mais que o anterior.'));
     }
@@ -506,10 +609,11 @@ public enum DashboardPage {
       return el('div', { class: 'bestiary' }, el('div', { class: 'mhead' }, `Onde suas contas caçaram no nível ${w.level} (±${w.range})`),
         el('div', { class: 'table-wrap' }, el('table', { class: 'mini' },
           el('thead', null, el('tr', null, el('th', null, 'Hunt'), ['XP/h', 'Lucro/h', 'Recebido/h', 'Horas'].map((h) => el('th', { class: 'n' }, h)))),
-          el('tbody', null, w.rows.map((r) => el('tr', { title: `${r.accounts.join(', ')}${r.deaths ? ` · ${r.deaths} morte(s)` : ''}` },
-            el('td', { style: { whiteSpace: 'normal' } }, r.title, r.current ? ' (atual)' : '', el('div', { class: 'muted-text', style: { fontSize: '11px' } }, r.accounts.join(', '))),
+          el('tbody', null, w.rows.map((r) => el('tr', null,
+            el('td', { style: { whiteSpace: 'normal' } }, r.title, r.current ? ' (atual)' : '',
+              el('span', { class: 'cell-sub' }, `${r.accounts.join(', ')}${num(r.deaths) ? ` · ${plural(num(r.deaths), 'morte', 'mortes')}` : ''}`)),
             el('td', { class: 'n' }, kk(r.xpPerHour)), el('td', { class: 'n ' + (r.profitPerHour >= 0 ? 'pos' : 'neg') }, kkSigned(r.profitPerHour)),
-            el('td', { class: 'n' }, kk(r.damageTakenPerHour)), el('td', { class: 'n' }, r.hours.toLocaleString('pt-BR'))))))),
+            el('td', { class: 'n' }, kk(r.damageTakenPerHour)), el('td', { class: 'n' }, dec(r.hours))))))),
         el('div', { class: 'sk-foot', style: { marginTop: '4px' } }, 'Hunts de 30 min ou mais de qualquer conta nos últimos 60 dias, no mínimo 1 h por mapa. A party de cada conta é diferente: use como ponto de partida.'));
     }
 
@@ -521,7 +625,7 @@ public enum DashboardPage {
       const items = [];
       const d = a.insights;
       if (d && d.reference) {
-        const text = d.drop != null ? `${d.drop > 0 ? '−' : '+'}${Math.round(Math.abs(d.drop) * 100)}% vs. melhor` : 'vs. melhor recente';
+        const text = d.drop != null ? `${d.drop > 0 ? '−' : '+'}${Math.round(Math.abs(d.drop) * 100)}% vs. típico` : 'vs. típico';
         items.push(['hunt', 'Hunt', text, d.drop != null && d.drop >= 0.2]);
       } else if (a.benchmark || a.bestiary) items.push(['hunt', 'Hunt', 'histórico e bestiário', false]);
       const p = a.levelPlan;
@@ -552,15 +656,12 @@ public enum DashboardPage {
         items.push(['daily', 'Missões', `${done}/${dm.length} hoje${st.day ? ` · dia ${st.day}/7` : ''}`, !!st.atRisk]);
       }
       if (!items.length) return null;
-      return el('div', { class: 'tools' }, items.map(([tab, title, text, warn]) => {
-        const b = el('button', { type: 'button', class: warn ? 'warn' : '' }, el('b', null, title), el('span', null, text));
-        b.addEventListener('click', () => { openPanel = { index: a.index, tab }; renderPanel(); });
-        return b;
-      }));
+      return el('div', { class: 'tools cx' }, items.map(([tab, title, text, warn]) =>
+        el('button', { type: 'button', class: warn ? 'warn' : '', 'data-key': tab, onclick: () => showPanel(a.index, tab) }, el('b', null, title), el('span', null, text))));
     }
     function kills(a, n) {
       const list = topKills((a.analyzer || {}).kills).slice(0, n);
-      return list.length ? el('div', { class: 'monsters' }, 'Mais abatidos: ' + list.map(([m, k]) => `${m} ×${fmt(k)}`).join(' · ')) : null;
+      return list.length ? el('div', { class: 'monsters cx' }, 'Mais abatidos: ' + list.map(([m, k]) => `${m} ×${fmt(k)}`).join(' · ')) : null;
     }
     function drops(a) {
       const list = topKills((a.analyzer || {}).drops, 12).filter(([n]) => n.toLowerCase() !== 'gold coin').slice(0, 8);
@@ -680,22 +781,18 @@ public enum DashboardPage {
       const shown = parts.filter(Boolean);
       return shown.length ? el('div', null, shown) : el('div', { class: 'empty' }, 'Sem dados para esta conta agora.');
     }
+    function showPanel(index, tab) { openPanel = { index, tab }; renderPanel(); }
     function renderPanel() {
-      const modal = $('panel-modal');
       const a = openPanel && lastAccounts.find((x) => x.index === openPanel.index);
-      if (!a) { modal.classList.remove('open'); openPanel = null; return; }
-      const scroll = $('panel-body').scrollTop;
-      $('panel-title').textContent = a.label;
-      $('panel-tabs').replaceChildren(...TABS.map(([tab, title]) => {
-        const b = el('button', { type: 'button', 'aria-pressed': String(tab === openPanel.tab) }, title);
-        b.addEventListener('click', () => { openPanel.tab = tab; $('panel-body').scrollTop = 0; renderPanel(); });
-        return b;
-      }));
-      $('panel-body').replaceChildren(panelBody(a, openPanel.tab));
-      $('panel-body').scrollTop = scroll;
-      modal.classList.add('open');
+      if (!a) { openPanel = null; closeModal('panel-modal'); return; }
+      setText($('panel-title'), a.label);
+      update($('panel-tabs'), TABS.map(([tab, title]) => el('button', { type: 'button', 'data-key': tab, 'aria-pressed': String(tab === openPanel.tab),
+        onclick: () => { openPanel.tab = tab; $('panel-body').scrollTop = 0; renderPanel(); } }, title)));
+      // Keyed by account and tab: another tab or account starts from fresh nodes, the same one is updated in place.
+      update($('panel-body'), el('div', { 'data-key': `${a.index}-${openPanel.tab}` }, panelBody(a, openPanel.tab)));
+      openModal('panel-modal');
     }
-    function closePanel() { openPanel = null; renderPanel(); }
+    function closePanel() { openPanel = null; closeModal('panel-modal'); }
     function skillsBody(a) {
       const d = a.skills;
       const body = el('div');
@@ -792,10 +889,14 @@ public enum DashboardPage {
       return box;
     }
 
-    async function getJSON(path) {
-      const r = await fetch(path, { cache: 'no-store' });
-      if (!r.ok) throw new Error(r.status);
-      return r.json();
+    // A request that hangs (weak Wi-Fi, Mac asleep) gives up after 10 s instead of holding the next one.
+    async function getJSON(path, timeoutMs = 10000) {
+      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const r = await fetch(path, { cache: 'no-store', signal: ctrl.signal });
+        if (!r.ok) throw new Error(r.status);
+        return await r.json();
+      } finally { clearTimeout(timer); }
     }
 
     // ---- account cards ----
@@ -803,7 +904,7 @@ public enum DashboardPage {
 
     // Chance of a death in the next hour: the health each member lost in the hunt's 3 s windows, against what it had,
     // or the map's deaths near this level before there are 10 minutes of them.
-    function deathRisk(a) {
+    function deathRisk(a, tap) {
       const r = a.deathRisk;
       if (!r) return null;
       const p = num(r.perHour), pct = riskPercent(p);
@@ -813,37 +914,51 @@ public enum DashboardPage {
         ? `pelo histórico do mapa (${r.deaths} mortes em ${r.hours} h)`
         : `pela vida perdida nos últimos ${Math.min(20, num(r.minutes))} min e ${r.hours} h do mapa${m && p >= 0.01 ? ` · mais exposto: ${vocation(m.vocation)}` : ''}`;
       const title = m ? `Maior perda de vida em 3 s (já com a cura): ${fmt(m.biggestWindow)} · vida mínima ${fmt(m.lowestHealth)}/${fmt(m.maxHealth)}` : '';
-      return el('div', { class: 'madvice', style: { marginTop: '8px' }, title },
+      const open = () => showPanel(a.index, 'risk');
+      return el('div', { class: 'madvice' + (tap ? ' c-risk tap' : ''), style: { marginTop: '8px' }, title,
+        ...(tap ? { role: 'button', tabindex: '0', onclick: open, onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } } } : {}) },
         'Risco de morte ', el('b', { class: cls }, `${pct}%/h`), ` · ${note}`);
     }
 
-    function card(a) {
+    // Phone cards start compact; these were opened with a tap.
+    const expandedCards = new Set(), openMembers = new Set();
+    const ago = (ms) => duration(Date.now() - num(ms));
+    function card(a, warning) {
       const [statusText, statusColor] = STATUS[a.status] || STATUS.offline;
       const statusDot = el('i', { style: { background: statusColor, border: a.status === 'offline' ? '1px solid var(--muted)' : '0' } });
       const top = el('div', { class: 'card-top' },
         el('span', { class: 'swatch', style: { background: SERIES[a.index] } }),
         el('span', { class: 'label' }, a.label),
         el('span', { class: 'status' }, statusDot, statusText));
+      const live = a.status === 'hunting' || a.status === 'stale';
       const state = a.state || {}, character = state.character || {}, account = a.account || {};
       const who = character.name || account.name;
       const level = character.level || account.level;
       const huntNow = a.status === 'hunting' && a.daily && a.daily.currentHunt ? ` · ${a.daily.currentHunt.title}` : '';
       const sub = el('div', { class: 'sub' }, who ? `${who}${level ? ` · level ${level}` : ''}${a.training ? ' · treino' : ''}${huntNow}` : '');
-      const node = el('div', { class: 'card' }, top, sub);
+      const compact = !expandedCards.has(a.index);
+      const node = el('div', { class: 'card' + (compact ? ' compact' : ''), 'data-key': `card-${a.index}` }, top, sub);
+      if (a.status === 'stale') {
+        node.append(el('div', { class: 'alert warn' }, a.updatedAt
+          ? `Sem dados do jogo há ${ago(a.updatedAt)}: os números abaixo são de ${time(a.updatedAt)}.`
+          : 'Sem dados do jogo há mais de um minuto: os números abaixo podem estar parados.'));
+      } else if (a.status === 'crashed') {
+        node.append(el('div', { class: 'alert bad' }, 'A página do jogo desta conta travou. O gerenciador está recarregando.'));
+      }
       const an = a.analyzer;
-      if (a.status === 'hunting' && an) {
+      if (live && an) {
         const elapsed = an.elapsedMs, profit = num(an.lootGold) - num(an.suppliesGold);
         node.append(el('div', { class: 'hero' },
           el('div', null, el('small', null, 'XP/h'), el('b', null, fmt(an.xpPerHour))),
           el('div', null, el('small', null, 'Lucro/h'), el('b', { class: profit >= 0 ? 'pos' : 'neg' }, signed(perHour(profit, elapsed))))));
         // The rest of the rates sit in the comparison table below the cards.
-        node.append(el('div', { class: 'stats' },
+        node.append(el('div', { class: 'stats cx' },
           stat('Tempo', duration(elapsed)), stat('Kills/h', fmt(perHour(an.killsTotal, elapsed))), stat('Balance', signed(profit), profit >= 0 ? 'pos' : 'neg'),
           stat('Supplies/h', fmt(perHour(an.suppliesGold, elapsed))), stat('Recebido/kill', orDash(ratio(an.damageTaken, an.killsTotal), fmt)),
           stat('Lucro/kill', num(an.killsTotal) ? signed(profit / num(an.killsTotal)) : '—')));
         const top = kills(a, 3);
         if (top) node.append(top);
-        const risk = deathRisk(a);
+        const risk = deathRisk(a, true);
         if (risk) node.append(risk);
       } else if (a.lastSummary) {
         const s = a.lastSummary;
@@ -855,39 +970,63 @@ public enum DashboardPage {
       const inv = a.invasion;
       if (inv && !inv.finished && inv.next) {
         const when = inv.next.live ? 'em andamento' : `começa às ${time(inv.next.startAt)} (${until(inv.next.startAt)})`;
-        node.append(el('div', { class: 'note' }, `${inv.name}${inv.boss ? ` · ${inv.boss}` : ''}: ${inv.joined ? 'inscrito' : 'não inscrito'} · ${when}`));
+        node.append(el('div', { class: 'note cx' }, `${inv.name}${inv.boss ? ` · ${inv.boss}` : ''}: ${inv.joined ? 'inscrito' : 'não inscrito'} · ${when}`));
       }
       const tl = tools(a);
       if (tl) node.append(tl);
       if (a.supply) {
-        for (const x of a.supply.alerts || []) node.append(el('div', { class: 'alert ' + x.level }, x.text));
+        for (const x of a.supply.alerts || []) node.append(el('div', { class: 'alert cx ' + x.level }, x.text));
         const k = a.supply.keys, c = a.supply.cap, parts = [];
         if (k) parts.push(`Chaves ${k.used}/${k.max}` + (k.nextKeyMs && k.used < k.max ? ` (próxima ~${duration(k.nextKeyMs)})` : ''));
-        if (c) parts.push(`Mochila ${Math.round(100 * c.used / c.total)}%`);
-        if (parts.length) node.append(el('div', { class: 'madvice', style: { marginTop: '8px' } }, parts.join(' · ')));
+        if (c && num(c.total) > 0) parts.push(`Mochila ${Math.round(100 * num(c.used) / num(c.total))}%`);
+        if (parts.length) node.append(el('div', { class: 'madvice cx', style: { marginTop: '8px' } }, parts.join(' · ')));
       }
-      const party = state.party || (a.status !== 'hunting' ? a.roster : null);
+      const party = state.party || (!live ? a.roster : null);
       if (party && party.length) {
         // Who spends the supplies: one member taking most of it points at that member's heal/potion setup.
         const sameName = party.length > 1 && party.every((m) => m.name === party[0].name);
-        const spent = a.status === 'hunting' ? party.reduce((sum, m) => sum + num(m.suppliesGold), 0) : 0;
-        if (spent > 0) node.append(el('div', { class: 'mhead', style: { marginTop: '12px' } }, 'Party · parte dos supplies na hunt'));
+        const spent = live ? party.reduce((sum, m) => sum + num(m.suppliesGold), 0) : 0;
+        if (spent > 0) node.append(el('div', { class: 'mhead cx', style: { marginTop: '12px' } }, 'Party · parte dos supplies na hunt'));
         const hit = (m) => m.hpAverage != null && m.hpAverage < 0.8;
-        node.append(el('div', { class: 'party' + (spent > 0 ? ' with-supplies' : '') }, party.map((m) => el('div', { class: 'member' },
-          // Whoever takes the hits shows in the warning color; the averages are in the panel's Equipamento tab.
-          el('span', { class: hit(m) ? 'warn-text' : '', title: `${m.name || ''}${m.hpAverage != null ? ` · HP média na hunt ${Math.round(m.hpAverage * 100)}%` : ''}` },
-            sameName ? `${vocation(m.vocation)} ${m.level || ''}` : `${m.name || ''} · ${vocation(m.vocation)} ${m.level || ''}`),
-          spent > 0 ? supplyShare(num(m.suppliesGold), spent, party.length) : null,
-          m.maxHp ? el('div', { class: 'bars' },
-            el('div', { class: 'bar', title: `HP ${m.hp}/${m.maxHp}` }, el('div', { style: { width: `${Math.max(0, Math.min(100, 100 * num(m.hp) / num(m.maxHp)))}%`, background: 'var(--good)' } })),
-            num(m.maxMana) > 0 ? el('div', { class: 'bar', title: `Mana ${m.mana}/${m.maxMana}` }, el('div', { style: { width: `${Math.max(0, Math.min(100, 100 * num(m.mana) / num(m.maxMana)))}%`, background: 'var(--s0)' } })) : null)
-            : el('span')))));
+        const pctOf = (v, max) => Math.max(0, Math.min(100, 100 * num(v) / num(max)));
+        node.append(el('div', { class: 'party cx' + (spent > 0 ? ' with-supplies' : '') }, party.map((m, i) => {
+          // A tap writes out what the bars and the color only hint at (no hover on a phone).
+          const key = `${a.index}-${i}`, open = openMembers.has(key);
+          const toggle = () => { if (open) openMembers.delete(key); else openMembers.add(key); renderCards(); };
+          const extra = [m.name && sameName ? m.name : null, m.maxHp ? `HP ${fmt(m.hp)}/${fmt(m.maxHp)}` : null,
+            num(m.maxMana) > 0 ? `mana ${fmt(m.mana)}/${fmt(m.maxMana)}` : null,
+            m.hpAverage != null ? `HP média na hunt ${Math.round(m.hpAverage * 100)}%${m.hpLowest != null ? ` (mín. ${Math.round(m.hpLowest * 100)}%)` : ''}` : null].filter(Boolean);
+          return el('div', { class: 'member tap', role: 'button', tabindex: '0', 'aria-expanded': String(open), onclick: toggle,
+              onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } } },
+            // Whoever takes the hits shows in the warning color.
+            el('span', { class: hit(m) ? 'warn-text' : '' },
+              sameName ? `${vocation(m.vocation)} ${m.level || ''}` : `${m.name || ''} · ${vocation(m.vocation)} ${m.level || ''}`),
+            spent > 0 ? supplyShare(num(m.suppliesGold), spent, party.length) : null,
+            m.maxHp ? el('div', { class: 'bars' },
+              el('div', { class: 'bar' }, el('div', { style: { width: `${pctOf(m.hp, m.maxHp)}%`, background: 'var(--good)' } })),
+              num(m.maxMana) > 0 ? el('div', { class: 'bar' }, el('div', { style: { width: `${pctOf(m.mana, m.maxMana)}%`, background: 'var(--s0)' } })) : null)
+              : el('span'),
+            open && extra.length ? el('div', { class: 'member-more' }, extra.join(' · ')) : null);
+        })));
       }
       if (a.offline && num(a.offline.elapsedMs) >= 5 * 60000) {
-        node.append(el('div', { class: 'note' },
+        node.append(el('div', { class: 'note cx' },
           `Enquanto o app estava fechado (${duration(a.offline.elapsedMs)}): +${fmt(a.offline.xp)} XP · ${fmt(a.offline.killsTotal)} kills · ${fmt(a.offline.lootGold)} gold de loot`));
       }
+      // Phone only (CSS): the account's top warning, and the tap that opens the full card.
+      if (warning) node.append(el('div', { class: 'alert c-warn ' + warning.level }, warning.text.charAt(0).toUpperCase() + warning.text.slice(1)));
+      // Only when the compact card hides something.
+      if (node.querySelector('.cx')) node.append(el('button', { type: 'button', class: 'c-more', 'aria-expanded': String(!compact),
+        onclick: () => { if (compact) expandedCards.add(a.index); else expandedCards.delete(a.index); renderCards(); } }, compact ? 'Ver o cartão completo' : 'Recolher'));
       return node;
+    }
+    // A card that fails to draw shows that, instead of taking the whole page down with it.
+    function safeCard(a, warning) {
+      try { return card(a, warning); } catch (e) {
+        console.error(e);
+        return el('div', { class: 'card', 'data-key': `card-${a.index}` }, el('div', { class: 'card-top' }, el('span', { class: 'label' }, a.label || `Conta ${num(a.index) + 1}`)),
+          el('div', { class: 'empty' }, 'Erro ao desenhar este cartão. Os outros continuam atualizando.'));
+      }
     }
 
     // ---- accounts on the same hunt, side by side ----
@@ -921,8 +1060,8 @@ public enum DashboardPage {
       }
       const shown = [...groups.values()].filter((g) => g.length >= 2);
       $('compare-section').hidden = !shown.length;
-      if (!shown.length) { $('compare').replaceChildren(); return; }
-      $('compare').replaceChildren(...shown.map((group) => {
+      if (!shown.length) { update($('compare')); return; }
+      update($('compare'), shown.map((group) => {
         const title = (group[0].daily && group[0].daily.currentHunt && group[0].daily.currentHunt.title) || `Hunt #${group[0].huntId}`;
         const ranked = group.filter((a) => num(a.analyzer.elapsedMs) >= COMPARE_MIN_MS);
         const rows = COMPARE.map(([label, value, better, format]) => {
@@ -936,7 +1075,7 @@ public enum DashboardPage {
             return el('td', { class: 'n' + (bad ? ' neg-cell' : '') }, format(v));
           }));
         });
-        return el('div', { class: 'cmp-group' }, el('h3', null, title),
+        return el('div', { class: 'cmp-group', 'data-key': `cmp-${group[0].huntId}` }, el('h3', null, title),
           el('div', { class: 'table-wrap' }, el('table', null,
             el('thead', null, el('tr', null, el('th', null, ''), group.map((a) => el('th', { class: 'n' },
               el('span', { class: 'swatch', style: { background: SERIES[a.index], display: 'inline-block', marginRight: '6px' } }), a.label)))),
@@ -949,7 +1088,7 @@ public enum DashboardPage {
     function supplyShare(value, total, members) {
       const share = total > 0 ? value / total : 0;
       const heavy = members > 1 && share >= 0.5;
-      return el('div', { class: 'share', title: `${fmt(value)} gold em supplies (${Math.round(share * 100)}% da party)` },
+      return el('div', { class: 'share' },
         el('div', { class: 'bar' }, el('div', { style: { width: `${100 * share}%`, background: heavy ? 'var(--warning)' : 'var(--s0)' } })),
         el('span', { class: heavy ? 'warn-text' : '' }, `${Math.round(share * 100)}% · ${fmt(value)}`));
     }
@@ -1046,31 +1185,122 @@ public enum DashboardPage {
       body.replaceChildren(...nodes);
       body.scrollTop = scroll;
     }
-    $('presets-open').addEventListener('click', () => { presetMsg = null; $('presets-modal').classList.add('open'); loadPresets(); });
-    const closePresets = () => $('presets-modal').classList.remove('open');
+    $('presets-open').addEventListener('click', () => { presetMsg = null; openModal('presets-modal'); loadPresets(); });
+    const closePresets = () => closeModal('presets-modal');
     $('presets-close').addEventListener('click', closePresets);
     $('presets-modal').addEventListener('click', (e) => { if (e.target === $('presets-modal')) closePresets(); });
 
     $('panel-close').addEventListener('click', closePanel);
     $('panel-modal').addEventListener('click', (e) => { if (e.target === $('panel-modal')) closePanel(); });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSkills(); closePresets(); closeSetup(); } });
 
+    // ---- modals: the last one opened is on top; focus goes in, stays in, and comes back where it was ----
+    const modalStack = [];
+    const CLOSERS = { 'presets-modal': () => closePresets(), 'setup-modal': () => closeSetup(), 'panel-modal': () => closePanel() };
+    const focusables = (root) => [...root.querySelectorAll('button, [href], select, input, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter((n) => !n.disabled && n.offsetParent !== null);
+    function openModal(id) {
+      const m = $(id);
+      if (m.classList.contains('open')) return;
+      modalStack.push({ id, back: document.activeElement });
+      m.classList.add('open');
+      document.body.classList.add('modal-open');
+      const close = m.querySelector('.modal-head button');
+      if (close) close.focus({ preventScroll: true });
+    }
+    function closeModal(id) {
+      const m = $(id);
+      if (!m.classList.contains('open')) return;
+      m.classList.remove('open');
+      const i = modalStack.findIndex((x) => x.id === id);
+      const entry = i >= 0 ? modalStack.splice(i, 1)[0] : null;
+      if (!modalStack.length) document.body.classList.remove('modal-open');
+      if (entry && entry.back && entry.back.isConnected) entry.back.focus({ preventScroll: true });
+    }
+    document.addEventListener('keydown', (e) => {
+      const top = modalStack[modalStack.length - 1];
+      if (!top) return;
+      if (e.key === 'Escape') { e.preventDefault(); CLOSERS[top.id](); return; }
+      if (e.key !== 'Tab') return;
+      const list = focusables($(top.id));
+      if (!list.length) return;
+      const first = list[0], last = list[list.length - 1], inside = $(top.id).contains(document.activeElement);
+      if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus(); }
+    });
+
+    // ---- live state ----
+    let lastState = null, lastOkAt = 0, stateFailed = false, drawFailed = false, generatedAt = 0;
+    let lastRunsVersion, lastRunsFetch = Date.now(), lastDay = new Date().toDateString();
     async function refreshState() {
-      try {
-        const data = await getJSON('/api/state');
-        lastAccounts = data.accounts;
-        renderSummary(data);
-        $('cards').replaceChildren(...data.accounts.map(card));
-        renderCompare(data.accounts);
-        $('meta').textContent = `Atualizado às ${new Date(data.generatedAt).toLocaleTimeString('pt-BR')}`;
-        const update = $('update');
-        update.hidden = !data.update;
-        if (data.update) { update.textContent = `Versão ${data.update.version} disponível`; update.href = data.update.url; }
-        renderLegend();
-        renderPanel();
-      } catch (_) {
-        $('meta').textContent = 'Sem conexão com o gerenciador — ele está aberto?';
-      }
+      let data;
+      try { data = await getJSON('/api/state'); }
+      catch (_) { stateFailed = true; renderConnection(); return; }
+      stateFailed = false; lastOkAt = Date.now(); generatedAt = num(data.generatedAt) || Date.now();
+      applyState(data);
+      renderConnection();
+      // Finished hunts only change when one ends: the tables behind them follow runsVersion.
+      if (data.runsVersion !== undefined) {
+        if (lastRunsVersion !== undefined && data.runsVersion !== lastRunsVersion) runsPoll.run();
+        lastRunsVersion = data.runsVersion;
+      } else if (Date.now() - lastRunsFetch > 60000) runsPoll.run();
+      const today = new Date().toDateString();
+      if (today !== lastDay) { lastDay = today; runsPoll.run(); dailyPoll.run(); }
+    }
+    // Drawing errors stay apart from the connection: each part fails alone and the banner says which happened.
+    function applyState(data) {
+      lastState = data;
+      lastAccounts = data.accounts || [];
+      let failed = 0;
+      const guard = (fn) => { try { fn(); } catch (e) { failed++; console.error(e); } };
+      guard(() => renderSummary(data));
+      guard(renderCards);
+      guard(() => renderCompare(lastAccounts));
+      guard(() => {
+        const link = $('update');
+        link.hidden = !data.update;
+        if (data.update) { setText(link, `Versão ${data.update.version} disponível`); if (link.getAttribute('href') !== data.update.url) link.href = data.update.url; }
+      });
+      guard(renderLegend);
+      guard(renderHuntFilters);
+      guard(renderPanel);
+      guard(() => renderTab(data.attention || []));
+      drawFailed = failed > 0;
+    }
+    function renderCards() {
+      if (!lastState) return;
+      const items = lastState.attention || [];
+      const RANK = { info: 1, warn: 2, bad: 3 };
+      update($('cards'), lastAccounts.map((a) => {
+        const mine = items.filter((i) => i.account === a.index).sort((x, y) => (RANK[y.level] || 0) - (RANK[x.level] || 0));
+        const warning = mine[0] ? { level: mine[0].level, text: stripLabel(mine[0].text, a.label) } : null;
+        return safeCard(a, warning);
+      }));
+    }
+    const stripLabel = (t, label) => label && t.startsWith(label) ? t.slice(label.length).replace(/^\s*[:·]\s*/, '') : t;
+    function renderConnection() {
+      const stale = lastOkAt > 0 && (stateFailed || Date.now() - lastOkAt > 10000);
+      document.body.classList.toggle('stale', stale);
+      let text;
+      if (!lastOkAt) text = stateFailed ? 'Sem conexão com o gerenciador — ele está aberto?' : 'Conectando…';
+      else if (stateFailed) text = `Sem conexão com o gerenciador — dados de ${time(lastOkAt)}`;
+      else if (stale) text = `Atualizando… dados de ${time(lastOkAt)}`;
+      else text = `Atualizado às ${new Date(generatedAt).toLocaleTimeString('pt-BR')}${drawFailed ? ' · parte da página não pôde ser desenhada' : ''}`;
+      setText($('meta'), text);
+    }
+    // Count in the tab title and a favicon in the color of the worst item, visible from another tab.
+    let lastFavicon = null;
+    function renderTab(items) {
+      const title = items.length ? `(${items.length}) Tibidle Hunts` : 'Tibidle Hunts';
+      if (document.title !== title) document.title = title;
+      const RANK = { info: 1, warn: 2, bad: 3 };
+      const worst = items.reduce((w, i) => (RANK[i.level] || 0) > (RANK[w] || 0) ? i.level : w, 'ok');
+      if (worst === lastFavicon) return;
+      lastFavicon = worst;
+      const color = { bad: '#d03b3b', warn: '#e0a000', info: '#2a78d6' }[worst] || '#8a6a1f';
+      const mark = worst === 'ok' ? '' : `<circle cx="24" cy="8" r="7" fill="${color}" stroke="#fff" stroke-width="2"/>`;
+      const icon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#8a6a1f"/>` +
+        `<text x="15" y="24" font-family="system-ui,sans-serif" font-size="20" font-weight="700" text-anchor="middle" fill="#fff">T</text>${mark}</svg>`;
+      $('favicon').href = 'data:image/svg+xml,' + encodeURIComponent(icon);
     }
 
     function renderSummary(data) {
@@ -1083,7 +1313,7 @@ public enum DashboardPage {
       const ready = data.accounts.reduce((n, a) => n + (((a.daily || {}).missions || []).filter((m) => m.state === 'ready').length), 0);
       const reset = data.accounts.map((a) => (a.daily || {}).dailyResetAt).filter(Boolean).sort()[0];
       const tile = (label, value, cls) => el('div', null, el('small', null, label), el('b', cls ? { class: cls } : null, value));
-      $('summary').replaceChildren(
+      update($('summary'),
         tile('XP/h total', fmt(xp)), tile('Lucro/h total', signed(profit), profit >= 0 ? 'pos' : 'neg'),
         tile('Caçando', `${hunting.length}/${data.accounts.length}`), tile('Missões p/ resgatar', String(ready), ready ? 'pos' : ''),
         tile('Reset diário', reset ? `em ${until(reset)}` : '—'));
@@ -1094,28 +1324,25 @@ public enum DashboardPage {
       const RANK = { info: 1, warn: 2, bad: 3 };
       const rows = [...groups].map(([index, list]) => {
         const label = (data.accounts.find((x) => x.index === index) || {}).label || '';
-        const strip = (t) => label && t.startsWith(label) ? t.slice(label.length).replace(/^\s*[:·]\s*/, '') : t;
+        const strip = (t) => stripLabel(t, label);
         const bullet = (t) => { const s = strip(t); return s.charAt(0).toUpperCase() + s.slice(1); };
         const level = list.reduce((worst, i) => (RANK[i.level] || 0) > (RANK[worst] || 0) ? i.level : worst, list[0].level);
-        return el('div', { class: 'item ' + level }, el('span', { class: 'swatch', style: { background: SERIES[index] } }),
+        return el('div', { class: 'item ' + level, 'data-key': `att-${index}` }, el('span', { class: 'swatch', style: { background: SERIES[index] } }),
           el('div', null, label ? el('b', null, label) : null, list.length === 1 ? [`: ${strip(list[0].text)}`, muteControls(list[0])]
             : el('ul', null, list.map((i) => el('li', null, bullet(i.text), muteControls(i))))));
       });
       const muted = data.muted || [];
       if (muted.length) {
-        rows.push(el('details', null, el('summary', null, `${muted.length} ${muted.length === 1 ? 'aviso ignorado' : 'avisos ignorados'}`),
+        // Stays open across refreshes, so "reativar" can be reached.
+        rows.push(keptDetails('muted', el('summary', null, `${muted.length} ${muted.length === 1 ? 'aviso ignorado' : 'avisos ignorados'}`),
           el('ul', null, muted.map((i) => el('li', null, i.text, ` (${i.always ? 'sempre' : 'nesta hunt'})`, LOCAL ? el('span', { class: 'mute' }, button('reativar', () => muteAction('/api/attention/unmute', { mute: i.mute }))) : null)))));
       }
-      $('attention').replaceChildren(...(rows.length ? rows : [el('div', { class: 'ok' }, '✓ Nada precisa de atenção agora.')]));
+      update($('attention'), rows.length ? rows : [el('div', { class: 'ok', 'data-key': 'ok' }, '✓ Nada precisa de atenção agora.')]);
     }
 
     // Ignoring advice is a write, so only from this Mac (the server refuses it from the network too).
     const LOCAL = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
-    function button(text, action) {
-      const b = el('button', { type: 'button' }, text);
-      b.addEventListener('click', action);
-      return b;
-    }
+    const button = (text, action) => el('button', { type: 'button', onclick: action }, text);
     function muteControls(item) {
       if (!LOCAL || !item.mute) return null;
       return el('span', { class: 'mute' }, 'ignorar ', button('nesta hunt', () => muteAction('/api/attention/mute', { mute: item.mute, always: false })),
@@ -1123,12 +1350,12 @@ public enum DashboardPage {
     }
     async function muteAction(path, body) {
       try { await post(path, body); } catch (_) {}
-      refreshState();
+      statePoll.run();
     }
 
     // ---- charts ----
     function renderLegend() {
-      $('legend').replaceChildren(...lastAccounts.map((a) => el('span', null, el('i', { style: { background: SERIES[a.index] } }), a.label)));
+      update($('legend'), lastAccounts.map((a) => el('span', null, el('i', { style: { background: SERIES[a.index] } }), a.label)));
     }
 
     // Round tick step (1, 2, 2.5, 5 × 10^n) so the axis reads 0, 500 mil, 1 mi…
@@ -1136,15 +1363,27 @@ public enum DashboardPage {
       const raw = range / 4, p = 10 ** Math.floor(Math.log10(raw)), f = raw / p;
       return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
     }
-    const axisFmt = (v) => Math.abs(v) >= 10000 ? short.format(v) : full.format(v);
+    // Axis labels in the same style as the numbers: 500k, 1,25kk.
+    const axisFmt = (v) => { const a = Math.abs(v); return a >= 1e6 ? `${dec(v / 1e6, 2)}kk` : a >= 1e4 ? `${dec(v / 1e3)}k` : full.format(v); };
+    // Points sorted by time: the one nearest to t by binary search.
+    function nearest(pts, t) {
+      let lo = 0, hi = pts.length - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (pts[mid][0] < t) lo = mid + 1; else hi = mid; }
+      const after = pts[lo], before = pts[lo - 1];
+      return before && Math.abs(before[0] - t) <= Math.abs(after[0] - t) ? before : after;
+    }
 
-    function drawChart(host, series, valueIndex) {
+    function drawChart(host, series, valueIndex, marks) {
       host.querySelector('svg')?.remove();
       host.querySelector('.empty')?.remove();
-      const entries = Object.entries(series).map(([k, pts]) => [Number(k), pts]).filter(([, pts]) => pts.length);
+      // Samples from the first minutes of a hunt come without a rate (null): left out, never drawn as 0.
+      const entries = Object.entries(series).map(([k, pts]) => [Number(k), pts.filter((p) => p[valueIndex] != null && Number.isFinite(p[valueIndex]))])
+        .filter(([, pts]) => pts.length);
       if (!entries.length) { host.append(el('div', { class: 'empty' }, 'Sem amostras neste período. Os dados aparecem durante as hunts.')); return; }
       const W = Math.max(host.clientWidth, 300), H = 220, L = 52, R = 70, T = 10, B = 24;
       const t1 = Date.now(), t0 = t1 - rangeHours * 3600000;
+      // Above 24 h the server sends buckets: a gap only breaks the line when it is longer than a few of them.
+      const gap = Math.max(180000, (t1 - t0) / 200);
       let lo = 0, hi = 0;
       for (const [, pts] of entries) for (const p of pts) { lo = Math.min(lo, p[valueIndex]); hi = Math.max(hi, p[valueIndex]); }
       const step = niceStep(Math.max(hi - lo, 1));
@@ -1157,9 +1396,11 @@ public enum DashboardPage {
         axis.append(svg('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: Math.abs(v) < step / 2 ? 'var(--axis)' : 'var(--grid)', 'stroke-width': 1 }));
         const label = svg('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }); label.textContent = axisFmt(v); axis.append(label);
       }
-      for (let i = 0; i <= 4; i++) {
-        const t = t0 + (t1 - t0) * i / 4;
-        const label = svg('text', { x: x(t), y: H - 6, 'text-anchor': i === 0 ? 'start' : i === 4 ? 'end' : 'middle' });
+      // Phone width: three time labels instead of five, so they do not run into each other.
+      const ticks = W < 460 ? 2 : 4;
+      for (let i = 0; i <= ticks; i++) {
+        const t = t0 + (t1 - t0) * i / ticks;
+        const label = svg('text', { x: x(t), y: H - 6, 'text-anchor': i === 0 ? 'start' : i === ticks ? 'end' : 'middle' });
         label.textContent = rangeHours > 24 ? dateTime(t) : time(t); axis.append(label);
       }
       root.append(axis);
@@ -1167,7 +1408,7 @@ public enum DashboardPage {
       for (const [account, pts] of entries) {
         let d = '', prev = null;
         for (const p of pts) {
-          d += `${prev && p[0] - prev[0] <= 180000 ? 'L' : 'M'}${x(p[0]).toFixed(1)},${y(p[valueIndex]).toFixed(1)}`;
+          d += `${prev && p[0] - prev[0] <= gap ? 'L' : 'M'}${x(p[0]).toFixed(1)},${y(p[valueIndex]).toFixed(1)}`;
           prev = p;
         }
         root.append(svg('path', { d, fill: 'none', stroke: SERIES[account], 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
@@ -1183,6 +1424,18 @@ public enum DashboardPage {
         label.textContent = name.length > 10 ? name.slice(0, 9) + '…' : name;
         root.append(label);
       }
+      // Deaths (a triangle on top) and danger moments (a tick at the bottom), in the account's color.
+      for (const m of marks || []) {
+        if (m.at < t0 || m.at > t1) continue;
+        const cx = x(m.at);
+        const mark = m.kind === 'death'
+          ? svg('path', { d: `M${(cx - 5).toFixed(1)},${T}L${(cx + 5).toFixed(1)},${T}L${cx.toFixed(1)},${T + 8}Z`, class: 'mark-death', stroke: SERIES[m.account], 'stroke-width': 1.5 })
+          : svg('line', { x1: cx, x2: cx, y1: H - B - 7, y2: H - B, stroke: SERIES[m.account], 'stroke-width': 2, 'stroke-linecap': 'round' });
+        const title = svg('title');
+        title.textContent = `${m.kind === 'death' ? 'Morte' : 'Perigo'} · ${(lastAccounts[m.account] || {}).label || `Conta ${m.account + 1}`} · ${rangeHours > 24 ? dateTime(m.at) : time(m.at)}`;
+        mark.append(title);
+        root.append(mark);
+      }
       // Hover layer: crosshair + tooltip with every account's nearest sample.
       const cross = svg('line', { y1: T, y2: H - B, stroke: 'var(--muted)', 'stroke-width': 1, visibility: 'hidden' });
       const dots = svg('g', { visibility: 'hidden' });
@@ -1195,8 +1448,7 @@ public enum DashboardPage {
         const rows = [];
         dots.replaceChildren();
         for (const [account, pts] of entries) {
-          let best = null;
-          for (const p of pts) if (!best || Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p;
+          const best = nearest(pts, t);
           if (!best || Math.abs(best[0] - t) > Math.max(180000, (t1 - t0) / 60)) continue;
           rows.push([account, best]);
           dots.append(svg('circle', { cx: x(best[0]), cy: y(best[valueIndex]), r: 4, fill: SERIES[account], stroke: 'var(--surface)', 'stroke-width': 2 }));
@@ -1219,7 +1471,9 @@ public enum DashboardPage {
       host.append(root);
     }
 
+    // Built only while its details is open: up to 300 rows nobody looks at otherwise.
     function renderSeriesTable(series) {
+      if (!$('series-details').open) return;
       const rows = [];
       for (const [account, pts] of Object.entries(series)) for (const p of pts) rows.push([Number(account), p]);
       rows.sort((a, b) => b[1][0] - a[1][0]);
@@ -1229,13 +1483,37 @@ public enum DashboardPage {
           el('th', { class: 'n' }, 'Loot/h'), el('th', { class: 'n' }, 'Lucro/h'))),
         el('tbody', null, rows.slice(0, 300).map(([account, p]) => el('tr', null,
           el('td', null, dateTime(p[0])), el('td', null, (lastAccounts[account] || {}).label || `Conta ${account + 1}`),
-          el('td', { class: 'n' }, fmt(p[1])), el('td', { class: 'n' }, fmt(p[2])), el('td', { class: 'n' }, signed(p[3])))))));
+          el('td', { class: 'n' }, p[1] == null ? '—' : fmt(p[1])), el('td', { class: 'n' }, p[2] == null ? '—' : fmt(p[2])),
+          el('td', { class: 'n' }, p[3] == null ? '—' : signed(p[3])))))));
     }
+    $('series-details').addEventListener('toggle', () => { if (lastHistory) renderSeriesTable(lastHistory.series); });
 
+    // Deaths from the finished hunts, danger moments from the live hunts and the hunts loaded in the table.
+    function chartMarks() {
+      const marks = [];
+      for (const h of leanRuns) if (h.reason === 'death' || num(h.deaths) > 0) marks.push({ kind: 'death', account: num(h.account), at: num(h.endedAt) });
+      const seen = new Set();
+      const danger = (account, d) => {
+        for (const m of (d && d.moments) || []) {
+          const key = `${account}-${m.at}`;
+          if (!m.at || seen.has(key)) continue;
+          seen.add(key);
+          marks.push({ kind: 'danger', account, at: num(m.at) });
+        }
+      };
+      for (const a of lastAccounts) danger(a.index, a.dangers);
+      for (const h of huntIndex.values()) danger(num(h.account), h.dangers);
+      return marks;
+    }
     function renderCharts() {
       if (!lastHistory) return;
-      drawChart($('chart-xp'), lastHistory.series, 1);
-      drawChart($('chart-profit'), lastHistory.series, 3);
+      const marks = chartMarks();
+      drawChart($('chart-xp'), lastHistory.series, 1, marks);
+      drawChart($('chart-profit'), lastHistory.series, 3, marks);
+      const t0 = Date.now() - rangeHours * 3600000, shown = marks.filter((m) => m.at >= t0);
+      const note = $('marks-note');
+      note.hidden = !shown.length;
+      if (shown.length) setText(note, '▼ no topo: hunt que terminou em morte · traço embaixo: alguém abaixo de 40% da vida.');
       renderSeriesTable(lastHistory.series);
     }
 
@@ -1244,19 +1522,93 @@ public enum DashboardPage {
     }
 
     // ---- hunts table ----
-    let lastHunts = [];
+    let lastHunts = [], huntsTotal = null, huntsPage = 0, huntsSeq = 0;
+    const HUNTS_PAGE = 50;
     const openDetails = new Set();
+    // Every full hunt seen in any list, by id: the setup comparison and "ver setup" look here first.
+    const huntIndex = new Map();
+    function rememberHunt(h) {
+      if (!h || h.id == null) return;
+      huntIndex.delete(h.id);
+      huntIndex.set(h.id, h);
+      if (huntIndex.size > 1000) huntIndex.delete(huntIndex.keys().next().value);
+    }
+    function huntFilter() {
+      return { account: $('hunts-account').value, huntId: $('hunts-map').value, minMinutes: num($('hunts-min').value) };
+    }
+    // The server filters (and counts the total); the same test here keeps an older server from showing everything.
+    const matchesFilter = (h, f) => (f.account === '' || String(h.account) === f.account) &&
+      (f.huntId === '' || String(h.huntId) === f.huntId) && num(h.elapsedSec) >= f.minMinutes * 60;
     async function refreshHunts() {
-      try {
-        const { hunts } = await getJSON('/api/hunts?limit=100');
-        lastHunts = hunts;
-        if (!hunts.length) { $('hunts').replaceChildren(el('div', { class: 'empty' }, 'Nenhuma hunt encerrada registrada ainda.')); return; }
+      const seq = ++huntsSeq, f = huntFilter();
+      const q = new URLSearchParams({ limit: String(HUNTS_PAGE), offset: String(huntsPage * HUNTS_PAGE) });
+      if (f.account !== '') q.set('account', f.account);
+      if (f.huntId !== '') q.set('huntId', f.huntId);
+      if (f.minMinutes) q.set('minMinutes', String(f.minMinutes));
+      let data;
+      try { data = await getJSON(`/api/hunts?${q}`); } catch (_) { return; }
+      if (seq !== huntsSeq) return;
+      const all = data.hunts || [];
+      all.forEach(rememberHunt);
+      const hunts = all.filter((h) => matchesFilter(h, f));
+      lastHunts = hunts;
+      huntsTotal = typeof data.total === 'number' ? data.total : null;
+      const filtered = f.account !== '' || f.huntId !== '' || f.minMinutes > 0;
+      if (!hunts.length) {
+        $('hunts').replaceChildren(el('div', { class: 'empty' }, filtered ? 'Nenhuma hunt encerrada com esses filtros.' : 'Nenhuma hunt encerrada registrada ainda.'));
+      } else {
         $('hunts').replaceChildren(el('table', null,
           el('thead', null, el('tr', null, ['Fim', 'Conta', 'Hunt', 'Personagens', 'Duração', 'Motivo'].map((h) => el('th', null, h)),
             ['Level', 'XP', 'XP/h', 'Loot', 'Supplies', 'Balance', 'Mortes'].map((h) => el('th', { class: 'n' }, h)))),
           el('tbody', null, hunts.flatMap((h) => [huntRow(h), huntDetail(h)]))));
-      } catch (_) {}
+      }
+      renderPager(hunts.length);
     }
+    function renderPager(shown) {
+      const pager = $('hunts-pager');
+      // Without a total (older server) there are no pages to walk.
+      if (huntsTotal === null || (huntsTotal <= HUNTS_PAGE && huntsPage === 0)) { pager.hidden = true; return; }
+      pager.hidden = false;
+      const from = huntsPage * HUNTS_PAGE + (shown ? 1 : 0), to = huntsPage * HUNTS_PAGE + shown;
+      const go = (page) => { huntsPage = page; refreshHunts(); };
+      pager.replaceChildren(
+        el('button', { type: 'button', onclick: () => go(huntsPage - 1), ...(huntsPage === 0 ? { disabled: '' } : {}) }, '‹ Mais recentes'),
+        el('span', null, `${full.format(from)}–${full.format(to)} de ${full.format(huntsTotal)}`),
+        el('button', { type: 'button', onclick: () => go(huntsPage + 1), ...(to >= huntsTotal ? { disabled: '' } : {}) }, 'Mais antigas ›'));
+    }
+    for (const id of ['hunts-account', 'hunts-map', 'hunts-min']) {
+      $(id).addEventListener('change', () => {
+        huntsPage = 0;
+        try { localStorage.setItem('huntsFilter', JSON.stringify(huntFilter())); } catch (_) {}
+        refreshHunts();
+      });
+    }
+    // Select options are only rewritten when the list itself changes, so an open select is not reset under the finger.
+    function setOptions(select, options, keep) {
+      const sig = JSON.stringify(options);
+      if (select.dataset.sig !== sig) {
+        select.replaceChildren(...options.map(([value, label]) => el('option', { value }, label)));
+        select.dataset.sig = sig;
+      }
+      if (keep != null && options.some(([value]) => value === keep) && select.value !== keep) select.value = keep;
+    }
+    function renderHuntFilters() {
+      const before = JSON.stringify(huntFilter());
+      const restore = (select, field, options) => {
+        let keep = select.value;
+        if (savedHuntsFilter[field] && options.some(([v]) => v === savedHuntsFilter[field])) { keep = savedHuntsFilter[field]; delete savedHuntsFilter[field]; }
+        setOptions(select, options, keep);
+      };
+      restore($('hunts-account'), 'account', [['', 'Todas as contas'], ...lastAccounts.map((a) => [String(a.index), a.label])]);
+      const titles = new Map();
+      for (const h of leanRuns) if (h.huntId != null && !titles.has(String(h.huntId))) titles.set(String(h.huntId), h.huntTitle || `#${h.huntId}`);
+      restore($('hunts-map'), 'huntId', [['', 'Todos os mapas'], ...[...titles].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'))]);
+      // A filter restored after the first page arrived: load the page it asks for.
+      if (huntsSeq > 0 && JSON.stringify(huntFilter()) !== before) { huntsPage = 0; refreshHunts(); }
+    }
+    let savedHuntsFilter = {};
+    try { savedHuntsFilter = JSON.parse(localStorage.getItem('huntsFilter') || '{}') || {}; } catch (_) {}
+    if (savedHuntsFilter.minMinutes) $('hunts-min').value = String(savedHuntsFilter.minMinutes);
 
     function huntDetail(h) {
       const hours = num(h.elapsedSec) / 3600, bal = num(h.balance);
@@ -1278,18 +1630,26 @@ public enum DashboardPage {
         setupBtn = el('button', { class: 'pr-btn', type: 'button', style: { marginTop: '8px' } }, 'Setup desta hunt / comparar com outra');
         setupBtn.addEventListener('click', (e) => { e.stopPropagation(); openSetup(h); });
       }
-      const tr = el('tr', { class: 'detail' }, el('td', { colspan: '13' }, el('div', { class: 'detail-grid' }, cells), deathBody(h.deathHits), dangerList(h.dangers, 8),
+      const tr = el('tr', { class: 'detail', id: `hunt-detail-${h.id}` }, el('td', { colspan: '13' }, el('div', { class: 'detail-inner' },
+        el('div', { class: 'detail-grid' }, cells), deathBody(h.deathHits), dangerList(h.dangers, 8),
         spent > 0 ? el('div', { style: { marginTop: '6px' } }, 'Supplies por membro: ' + members.slice().sort((x, y) => num(y.suppliesGold) - num(x.suppliesGold))
           .map((m) => `${vocation(m.vocation)} ${Math.round(100 * num(m.suppliesGold) / spent)}% (${fmt(m.suppliesGold)})`).join(' · ')) : null,
         el('div', { style: { marginTop: '6px' } }, 'Mais abatidos: ' + list(h.kills, 6)),
-        el('div', null, 'Drops: ' + list(h.drops, 12)), setupBtn));
+        el('div', null, 'Drops: ' + list(h.drops, 12)), setupBtn)));
       tr.hidden = !openDetails.has(h.id);
       h._detail = tr;
       return tr;
     }
 
     function huntRow(h) {
-      const row = el('tr', { class: 'run', title: 'Clique para ver detalhes' },
+      const open = openDetails.has(h.id);
+      const toggle = () => {
+        h._detail.hidden = !h._detail.hidden;
+        if (h._detail.hidden) openDetails.delete(h.id); else openDetails.add(h.id);
+        row.setAttribute('aria-expanded', String(!h._detail.hidden));
+      };
+      const row = el('tr', { class: 'run', title: 'Clique para ver detalhes', tabindex: '0', role: 'button', 'aria-expanded': String(open),
+        'aria-controls': `hunt-detail-${h.id}`, onclick: toggle, onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } } },
             el('td', null, dateTime(h.endedAt)),
             el('td', null, el('span', { class: 'swatch', style: { background: SERIES[h.account] } }), h.label),
             el('td', null, h.huntTitle || (h.huntId ? `#${h.huntId}` : '—')),
@@ -1301,23 +1661,21 @@ public enum DashboardPage {
             el('td', { class: 'n' }, fmt(h.lootGold)), el('td', { class: 'n' }, fmt(h.suppliesGold)),
             el('td', { class: 'n ' + (num(h.balance) >= 0 ? 'pos' : 'neg') }, signed(h.balance)),
             el('td', { class: 'n' }, fmt(h.deaths)));
-      row.addEventListener('click', () => {
-        h._detail.hidden = !h._detail.hidden;
-        if (h._detail.hidden) openDetails.delete(h.id); else openDetails.add(h.id);
-      });
       return row;
     }
 
     // ---- battle setup of a finished hunt, and what changed since another one ----
     let setupRun = null, setupCompare = null;
     const runLabel = (h) => `${dateTime(h.endedAt)} · ${h.label} · ${h.huntTitle || `#${h.huntId}`} · ${signed(num(h.elapsedSec) ? num(h.balance) / (num(h.elapsedSec) / 3600) : 0)}/h`;
+    // Hunts with a setup to compare against, newest first: every full hunt seen so far.
+    const setupCandidates = (h) => [...huntIndex.values()].filter((x) => x.hasSetup && x.id !== h.id).sort((a, b) => num(b.endedAt) - num(a.endedAt)).slice(0, 150);
     function openSetup(h) {
       setupRun = h;
       // Default: the previous hunt of the same account on the same map, else the previous one on that map.
-      const older = lastHunts.filter((x) => x.hasSetup && x.id !== h.id && x.endedAt < h.endedAt);
+      const older = setupCandidates(h).filter((x) => x.endedAt < h.endedAt);
       const pick = older.find((x) => x.account === h.account && x.huntId === h.huntId) || older.find((x) => x.huntId === h.huntId) || null;
       setupCompare = pick ? pick.id : null;
-      $('setup-modal').classList.add('open');
+      openModal('setup-modal');
       renderSetup();
     }
     async function renderSetup() {
@@ -1325,7 +1683,7 @@ public enum DashboardPage {
       if (!h) return;
       $('setup-title').textContent = `Setup · ${h.label} · ${h.huntTitle || `#${h.huntId}`}`;
       const picker = el('select', { class: 'pr-input', 'aria-label': 'Comparar com' }, el('option', { value: '' }, 'Não comparar'),
-        lastHunts.filter((x) => x.hasSetup && x.id !== h.id).map((x) => el('option', { value: String(x.id) }, runLabel(x))));
+        setupCandidates(h).map((x) => el('option', { value: String(x.id) }, runLabel(x))));
       picker.value = setupCompare === null ? '' : String(setupCompare);
       picker.addEventListener('change', () => { setupCompare = picker.value ? Number(picker.value) : null; renderSetup(); });
       const head = el('div', { class: 'pr-section' }, el('div', { class: 'madvice' }, `Esta hunt: ${runLabel(h)}`),
@@ -1362,7 +1720,7 @@ public enum DashboardPage {
       parts.push(el('div', { class: 'sk-foot' }, 'O setup é o que o app leu ao abrir o jogo ou retomar a hunt. Se você mudou a configuração no meio da hunt sem recarregar o jogo, a mudança não aparece aqui.'));
       $('setup-body').replaceChildren(head, ...parts);
     }
-    const closeSetup = () => { setupRun = null; $('setup-modal').classList.remove('open'); };
+    const closeSetup = () => { setupRun = null; closeModal('setup-modal'); };
     $('setup-close').addEventListener('click', closeSetup);
     $('setup-modal').addEventListener('click', (e) => { if (e.target === $('setup-modal')) closeSetup(); });
 
@@ -1373,23 +1731,25 @@ public enum DashboardPage {
       xp: ['XP por hora', (h, hours) => num(h.xp) / hours, fmt],
       kills: ['Kills por hora', (h, hours) => num(h.killsTotal) / hours, fmt],
     };
-    let levelRuns = [];
+    // The last 500 finished hunts with only the fields the chart, the map filter and the death marks use.
+    let levelRuns = [], leanRuns = [];
     async function refreshLevels() {
       try {
-        const { hunts } = await getJSON('/api/hunts?limit=500');
-        levelRuns = hunts.filter((h) => num(h.elapsedSec) >= 1800 && h.level && h.huntId != null);
+        const { hunts } = await getJSON('/api/hunts?lean=1&limit=500');
+        leanRuns = hunts || [];
+        levelRuns = leanRuns.filter((h) => num(h.elapsedSec) >= 1800 && h.level && h.huntId != null);
         const hours = new Map(), titles = new Map();
         for (const h of levelRuns) {
           hours.set(h.huntId, (hours.get(h.huntId) || 0) + num(h.elapsedSec) / 3600);
           titles.set(h.huntId, h.huntTitle || `#${h.huntId}`);
         }
-        const select = $('level-hunt');
-        let keep = select.value;
+        let keep = $('level-hunt').value;
         if (!keep) { try { keep = localStorage.getItem('levelHunt') || ''; } catch (_) {} }
         const order = [...hours.entries()].sort((a, b) => b[1] - a[1]);
-        select.replaceChildren(...order.map(([id, h]) => el('option', { value: String(id) }, `${titles.get(id)} (${h.toFixed(0)}h)`)));
-        if (order.some(([id]) => String(id) === keep)) select.value = keep;
+        setOptions($('level-hunt'), order.map(([id, h]) => [String(id), `${titles.get(id)} (${dec(h, 0)}h)`]), keep);
         renderLevels();
+        renderHuntFilters();
+        renderCharts();
       } catch (_) {}
     }
     function renderLevels() {
@@ -1409,7 +1769,7 @@ public enum DashboardPage {
       $('level-table').replaceChildren(points.length ? el('table', null,
         el('thead', null, el('tr', null, el('th', null, 'Fim'), el('th', null, 'Conta'), el('th', { class: 'n' }, 'Nível'), el('th', { class: 'n' }, 'Horas'), el('th', { class: 'n' }, title))),
         el('tbody', null, points.slice().sort((a, b) => a.level - b.level).map((p) => el('tr', null, el('td', null, dateTime(p.h.endedAt)), el('td', null, p.h.label),
-          el('td', { class: 'n' }, p.level.toLocaleString('pt-BR')), el('td', { class: 'n' }, p.hours.toFixed(1)), el('td', { class: 'n' }, format(p.v))))))
+          el('td', { class: 'n' }, dec(p.level)), el('td', { class: 'n' }, dec(p.hours)), el('td', { class: 'n' }, format(p.v))))))
         : el('div', { class: 'empty' }, 'Sem hunts.'));
       if (!points.length) { host.append(el('div', { class: 'empty' }, 'Ainda sem hunts de 30+ min encerradas nesta hunt.')); return; }
       const W = Math.max(host.clientWidth, 300), H = 240, L = 56, R = 16, T = 12, B = 30;
@@ -1486,7 +1846,7 @@ public enum DashboardPage {
         return el('tr', null, el('td', null, swatch, label),
           el('td', { class: 'n' }, fmt(a.xp), delta(a.xp, b.xp)),
           el('td', { class: 'n ' + (a.balance >= 0 ? 'pos' : 'neg') }, signed(a.balance), b.balance > 0 && a.balance >= 0 ? delta(a.balance, b.balance) : null),
-          el('td', { class: 'n' }, `${(a.huntedSeconds / 3600).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}h`, delta(a.huntedSeconds, b.huntedSeconds)),
+          el('td', { class: 'n' }, `${dec(a.huntedSeconds / 3600)}h`, delta(a.huntedSeconds, b.huntedSeconds)),
           el('td', { class: 'n' }, fmt(a.levels)), el('td', { class: 'n' }, fmt(a.runs)), el('td', { class: 'n' }, fmt(a.deaths)));
       };
       $('weekly').replaceChildren(el('table', null,
@@ -1511,7 +1871,7 @@ public enum DashboardPage {
             el('td', null, lastAccounts.map((a) => {
               const c = d.accounts[String(a.index)];
               return el('span', { style: { marginRight: '10px' } }, el('span', { class: 'swatch', style: { background: SERIES[a.index] } }),
-                c ? `${(c.huntedSeconds / 3600).toFixed(1)}h` : '0h');
+                c ? `${dec(c.huntedSeconds / 3600)}h` : '0h');
             })),
             el('td', { class: 'n' }, fmt(d.total.xp)), el('td', { class: 'n ' + (d.total.balance >= 0 ? 'pos' : 'neg') }, signed(d.total.balance)),
             el('td', { class: 'n' }, fmt(d.total.kills)), el('td', { class: 'n' }, fmt(d.total.runs)), el('td', { class: 'n' }, fmt(d.total.deaths)))))));
@@ -1531,20 +1891,18 @@ public enum DashboardPage {
         el('thead', null, el('tr', null, el('th', null, '#'), el('th', null, 'Hunt'),
           ['Hunts', 'Horas', 'XP/h', 'Lucro/h', 'Kills/h', 'Recebido/h', 'Supplies/h', 'Mortes'].map((h) => el('th', { class: 'n' }, h)))),
         el('tbody', null, rows.slice(0, 30).map((r, i) => el('tr', null, el('td', null, String(i + 1)), el('td', null, r.title),
-          el('td', { class: 'n' }, fmt(r.runs)), el('td', { class: 'n' }, r.hours.toFixed(1)), el('td', { class: 'n' }, fmt(r.xpPerHour)),
+          el('td', { class: 'n' }, fmt(r.runs)), el('td', { class: 'n' }, dec(r.hours)), el('td', { class: 'n' }, fmt(r.xpPerHour)),
           el('td', { class: 'n ' + (r.profitPerHour >= 0 ? 'pos' : 'neg') }, signed(r.profitPerHour)),
           el('td', { class: 'n' }, fmt(r.killsPerHour)),
-          el('td', { class: 'n', title: r.lifeDrainShare != null ? `${pct(r.lifeDrainShare)} é dreno de vida, que nenhum item protege (nas hunts medidas)` : '' },
-            fmt(r.damageTakenPerHour)),
+          // Life drain: no item protects from it (in the hunts with measured hits).
+          el('td', { class: 'n', title: r.lifeDrainShare != null ? 'Dreno de vida: nenhum item protege dele (nas hunts com golpes medidos)' : '' },
+            fmt(r.damageTakenPerHour), r.lifeDrainShare != null ? el('span', { class: 'cell-sub' }, `${pct(r.lifeDrainShare)} dreno`) : null),
           el('td', { class: 'n' }, fmt(r.suppliesPerHour)), el('td', { class: 'n' }, fmt(r.deaths)))))));
     }
     async function refreshRanking() {
       try {
         rankingData = await getJSON('/api/ranking');
-        const select = $('rank-account'), keep = select.value || 'all';
-        select.replaceChildren(el('option', { value: 'all' }, 'Todas as contas'),
-          ...lastAccounts.map((a) => el('option', { value: String(a.index) }, a.label)));
-        select.value = keep;
+        setOptions($('rank-account'), [['all', 'Todas as contas'], ...lastAccounts.map((a) => [String(a.index), a.label])], $('rank-account').value || 'all');
         renderRanking();
       } catch (_) {}
     }
@@ -1558,7 +1916,7 @@ public enum DashboardPage {
       $('csv-history').href = `/api/history.csv?hours=${rangeHours}`;
       for (const x of $('range').children) x.setAttribute('aria-pressed', String(x === b));
       try { localStorage.setItem('range', String(rangeHours)); } catch (_) {}
-      refreshHistory();
+      historyPoll.run();
     });
     $('theme').addEventListener('click', () => {
       const dark = document.documentElement.dataset.theme
@@ -1567,20 +1925,56 @@ public enum DashboardPage {
       document.documentElement.dataset.theme = dark ? 'light' : 'dark';
       try { localStorage.setItem('theme', document.documentElement.dataset.theme); } catch (_) {}
     });
-    try {
-      const theme = localStorage.getItem('theme'); if (theme) document.documentElement.dataset.theme = theme;
-      const saved = Number(localStorage.getItem('range'));
-      const button = [...$('range').children].find((b) => Number(b.dataset.h) === saved);
-      if (button) button.click();
-    } catch (_) {}
+    try { const theme = localStorage.getItem('theme'); if (theme) document.documentElement.dataset.theme = theme; } catch (_) {}
     let resizeTimer;
     addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { renderCharts(); renderLevels(); }, 150); });
 
-    refreshState().then(() => { refreshHistory(); refreshHunts(); refreshDaily(); refreshRanking(); refreshLevels(); });
-    setInterval(refreshState, 3000);
-    setInterval(refreshHistory, 60000);
-    setInterval(refreshHunts, 30000);
-    setInterval(() => { refreshDaily(); refreshRanking(); refreshLevels(); }, 60000);
+    // ---- polling ----
+    // Each resource asks again only after its answer arrived (no pile-up on a slow Wi-Fi), stops while the tab is
+    // hidden and asks right away when it comes back.
+    const pollers = [];
+    function poller(fn, every) {
+      const p = { timer: 0, busy: false, again: false };
+      p.schedule = () => { clearTimeout(p.timer); p.timer = document.hidden ? 0 : setTimeout(p.run, typeof every === 'function' ? every() : every); };
+      p.stop = () => { clearTimeout(p.timer); p.timer = 0; };
+      p.run = async () => {
+        p.stop();
+        if (p.busy) { p.again = true; return; }
+        p.busy = true;
+        try { await fn(); } catch (e) { console.error(e); }
+        p.busy = false;
+        if (p.again) { p.again = false; return p.run(); }
+        p.schedule();
+      };
+      pollers.push(p);
+      return p;
+    }
+    const statePoll = poller(refreshState, 3000);
+    const historyPoll = poller(refreshHistory, () => rangeHours > 24 ? 300000 : 60000);
+    const dailyPoll = poller(refreshDaily, 60000);
+    // Hunts, ranking and levels follow runsVersion; this is only the safety net.
+    const runsPoll = poller(async () => { lastRunsFetch = Date.now(); await Promise.all([refreshHunts(), refreshRanking(), refreshLevels()]); }, 600000);
+    let hiddenAt = 0, visibleAt = Date.now();
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { hiddenAt = Date.now(); pollers.forEach((p) => p.stop()); return; }
+      visibleAt = Date.now();
+      const long = hiddenAt && Date.now() - hiddenAt > 600000;
+      statePoll.run(); historyPoll.run(); dailyPoll.run();
+      if (long) runsPoll.run(); else runsPoll.schedule();
+    });
+    // The banner and the dimming follow the age of the data even while a request hangs.
+    setInterval(() => { if (!document.hidden && Date.now() - visibleAt > 5000) renderConnection(); }, 2000);
+
+    try {
+      const saved = Number(localStorage.getItem('range'));
+      const range = [...$('range').children].find((b) => Number(b.dataset.h) === saved);
+      if (range) {
+        rangeHours = saved;
+        $('csv-history').href = `/api/history.csv?hours=${rangeHours}`;
+        for (const x of $('range').children) x.setAttribute('aria-pressed', String(x === range));
+      }
+    } catch (_) {}
+    statePoll.run().then(() => { historyPoll.run(); dailyPoll.run(); runsPoll.run(); });
     </script>
     </body>
     </html>

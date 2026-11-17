@@ -90,29 +90,87 @@ public enum GearAdvisor {
         var elements: [String: Double] = [:]
     }
 
-    /// Damage the tank stops per second wearing `items`.
-    static func stopped(_ items: [String: Item], shielding: Double, combat: Combat) -> Double {
+    /// What hits a member before any of its gear, per second: rebuilt from the damage measured with the gear it
+    /// wears, so another item is judged against the same hits (the measured damage already went through the
+    /// current protection: a swap from 5% to 15% stops 10% of the raw hits, not 15% of what is left).
+    struct Raw {
+        var hits = 0.0                         // melee hits per second
+        var meleePerHit = 0.0                  // a melee hit before protection, shield and armor
+        var physicalSpells = 0.0               // physical spells and bleeding, before protection
+        var elements: [String: Double] = [:]   // spell damage per element, before protection
+        var total: Double { hits * meleePerHit + physicalSpells + elements.values.reduce(0, +) }
+    }
+
+    static func physicalProtection(_ items: [String: Item]) -> Double { min(0.9, items.values.reduce(0) { $0 + $1.physical } / 100) }
+    static func elementProtection(_ items: [String: Item], _ element: String) -> Double {
+        min(0.9, items.values.reduce(0) { $0 + $1.protection(element) } / 100)
+    }
+    /// Armor takes between half and nearly all of itself off each melee hit: 0.75 on average.
+    static func armorPerHit(_ items: [String: Item]) -> Double { 0.75 * items.values.reduce(0) { $0 + $1.armor } }
+    /// The shield blocks 0.75 × (Shielding/4 + 2.23) × defense × 0.08 per block, two charges back at one a second:
+    /// at most one block a second, spread over the hits.
+    static func shieldPerHit(_ items: [String: Item], shielding: Double, hits: Double) -> Double {
+        let defense = items.values.reduce(0) { $0 + $1.shieldDefense }
+        guard defense > 0, hits > 0 else { return 0 }
+        let skill = shielding + items.values.reduce(0) { $0 + $1.shielding }
+        return 0.75 * 0.08 * (skill / 4 + 2.23) * defense * min(hits, 1) / hits
+    }
+
+    /// The raw hits behind what `combat` measured with `items` worn.
+    static func raw(_ items: [String: Item], shielding: Double, combat: Combat) -> Raw {
         // Melee hits only: with no physical damage, armor and shield have nothing to work on.
         let hits = combat.physicalShare > 0 ? combat.hitsPerSecond : 0
         let physical = combat.takenPerSecond * combat.physicalShare, magic = combat.takenPerSecond - physical
-        let armor = items.values.reduce(0) { $0 + $1.armor }
-        let defense = items.values.reduce(0) { $0 + $1.shieldDefense }
-        let skill = shielding + items.values.reduce(0) { $0 + $1.shielding }
-        // Armor takes between half and nearly all of itself off each melee hit: 0.75 on average.
-        let byArmor = 0.75 * armor * hits
-        // The shield blocks 0.75 × (Shielding/4 + 2.23) × defense × 0.08 per block, two charges back at one a second.
-        let byShield = defense > 0 ? 0.75 * 0.08 * (skill / 4 + 2.23) * defense * min(hits, 1) : 0
         // Physical protection comes first, on the raw hit, before shield and armor take their part.
-        let protection = min(0.9, items.values.reduce(0) { $0 + $1.physical } / 100)
-        // Physical spells and bleeding meet it too, without the shield and armor.
-        let byProtection = (physical + byArmor + byShield + magic * (combat.elements["physical"] ?? 0)) * protection / (1 - protection)
-        // Magic skips shield and armor: only the protection to its element counts.
-        let byElement = elementNames.reduce(0.0) { sum, element in
-            let share = combat.elements.isEmpty ? 1 / Double(elementNames.count) : combat.elements[element] ?? 0
-            let protection = min(0.9, items.values.reduce(0) { $0 + $1.protection(element) } / 100)
-            return sum + magic * share * protection / (1 - protection)
+        let protection = physicalProtection(items)
+        var raw = Raw(hits: hits)
+        if hits > 0 {
+            raw.meleePerHit = (physical / hits + armorPerHit(items) + shieldPerHit(items, shielding: shielding, hits: hits)) / (1 - protection)
         }
-        return byArmor + byShield + byProtection + byElement
+        // Physical spells and bleeding meet the physical protection too, without the shield and armor.
+        raw.physicalSpells = magic * (combat.elements["physical"] ?? 0) / (1 - protection)
+        // Magic skips shield and armor: only the protection to its element counts. Life drain and the rest no item
+        // protects against stay out, the same with any gear.
+        for element in elementNames {
+            let share = combat.elements.isEmpty ? 1 / Double(elementNames.count) : combat.elements[element] ?? 0
+            if share > 0 { raw.elements[element] = magic * share / (1 - elementProtection(items, element)) }
+        }
+        return raw
+    }
+
+    /// Damage taken per second wearing `items` against the raw hits, by part: melee, physical spells, then each
+    /// element in name order (so two sets of items are compared part by part). Armor and shield cannot take more
+    /// than the hit.
+    static func takenParts(_ items: [String: Item], shielding: Double, raw: Raw) -> [Double] {
+        let protection = physicalProtection(items)
+        var melee = 0.0
+        if raw.hits > 0 {
+            let hit = raw.meleePerHit * (1 - protection)
+            let armor = min(armorPerHit(items), hit)
+            let shield = min(shieldPerHit(items, shielding: shielding, hits: raw.hits), hit - armor)
+            melee = raw.hits * (hit - armor - shield)
+        }
+        return [melee, raw.physicalSpells * (1 - protection)]
+            + raw.elements.sorted { $0.key < $1.key }.map { $0.value * (1 - elementProtection(items, $0.key)) }
+    }
+
+    static func taken(_ items: [String: Item], shielding: Double, raw: Raw) -> Double {
+        takenParts(items, shielding: shielding, raw: raw).reduce(0, +)
+    }
+
+    /// Damage the tank stops per second wearing `items`, when `combat` was measured with them.
+    static func stopped(_ items: [String: Item], shielding: Double, combat: Combat) -> Double {
+        let raw = raw(items, shielding: shielding, combat: combat)
+        return raw.total - taken(items, shielding: shielding, raw: raw)
+    }
+
+    /// Damage per second a member wearing `current` (as measured in `combat`) would stop more wearing `candidate`.
+    static func gain(from current: [String: Item], to candidate: [String: Item], shielding: Double, combat: Combat) -> Double {
+        gain(current, candidate, shielding: shielding, raw: raw(current, shielding: shielding, combat: combat))
+    }
+
+    static func gain(_ current: [String: Item], _ candidate: [String: Item], shielding: Double, raw: Raw) -> Double {
+        zip(takenParts(current, shielding: shielding, raw: raw), takenParts(candidate, shielding: shielding, raw: raw)).reduce(0) { $0 + $1.0 - $1.1 }
     }
 
     static func members(accounts: [[String: Any]]) -> [Member] {
@@ -200,14 +258,14 @@ public enum GearAdvisor {
         var out: [(score: Double, text: [String: Any])] = []
         for (tank, combat, of) in targets where combat.takenPerSecond > 0 {
             let peers = all.filter { $0.vocation == tank.vocation && $0.account != account }
-            let now = stopped(tank.items, shielding: tank.shielding, combat: combat)
+            let raw = raw(tank.items, shielding: tank.shielding, combat: combat)
             for slot in defensiveSlots {
                 let current = tank.items[slot]
                 let best = peers.compactMap { peer -> (Member, Item, Double)? in
                     guard let item = peer.items[slot], item.name != current?.name else { return nil }
                     var swapped = tank.items
                     swapped[slot] = item
-                    return (peer, item, stopped(swapped, shielding: tank.shielding, combat: combat) - now)
+                    return (peer, item, gain(tank.items, swapped, shielding: tank.shielding, raw: raw))
                 }.max { $0.2 < $1.2 }
                 guard let best, best.2 / combat.takenPerSecond >= minShare else { continue }
                 let share = best.2 / combat.takenPerSecond

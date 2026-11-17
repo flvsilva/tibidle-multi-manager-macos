@@ -323,14 +323,14 @@ final class InsightsTests: XCTestCase {
         run(1, map: 11, level: 104, xp: 5000)          // another account, a few levels ahead
         run(2, map: 12, level: 120, xp: 9000)          // too far from the level
         run(3, map: 11, level: 99, xp: 3000, seconds: 600)  // too short
-        let maps = store.whereToHunt(level: 100, huntId: 10)!
+        let maps = store.whereToHunt(nearLevel: 100, current: 10)!
         let rows = maps["rows"] as! [[String: Any]]
         XCTAssertEqual(rows.map { $0["huntId"] as? Int }, [11, 10])
         XCTAssertEqual(rows[0]["xpPerHour"] as? Int, 5000)
         XCTAssertEqual(rows[0]["damageTakenPerHour"] as? Int, 7200)
         XCTAssertEqual(rows[1]["current"] as? Bool, true)
         // Nothing new to show when the only map near the level is the current one.
-        XCTAssertNil(store.whereToHunt(level: 120, huntId: 12))
+        XCTAssertNil(store.whereToHunt(nearLevel: 120, current: 12))
     }
 
     func testRankingComparesDamageTakenSuppliesAndLifeDrain() {

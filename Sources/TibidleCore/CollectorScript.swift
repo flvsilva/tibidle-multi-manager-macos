@@ -10,8 +10,8 @@ public enum CollectorScript {
     public static let source = #"""
     (() => {
       'use strict';
-      if (location.hostname !== 'play.tibidle.com' || window.__tibidleDashboard) return;
-      window.__tibidleDashboard = true;
+      // A WKUserScript runs once per document, so no marker is left on the page for the game to see.
+      if (location.hostname !== 'play.tibidle.com') return;
 
       const HANDLER = 'tibidleDashboard';
       const FRAME_INTERVAL_MS = 3000;
@@ -45,7 +45,7 @@ public enum CollectorScript {
         return num(isObject(w.attrs) ? w.attrs.attack : undefined) ?? num(w.attack);
       };
       // Gear, for the equipment analysis: per slot, the item's name and its numeric stats (armor, defense, attack,
-      // bonuses, tier…) plus the names of its fields; nothing that looks like an id, no strings but a few labels.
+      // bonuses, tier…); nothing that looks like an id, no strings but a few labels.
       const ID = /^id$|Id$|_id$|^uid|uuid|guid|owner|serial|token/i;
       const LABELS = ['rarity', 'tier', 'quality', 'type', 'slot', 'element', 'grade', 'shootType', 'wandType', 'weaponType', 'vocation'];
       const stats = (o, out, prefix) => {
@@ -56,7 +56,6 @@ public enum CollectorScript {
           else if (LABELS.includes(k) && typeof v === 'string') out[prefix + k] = v.slice(0, 24);
         }
       };
-      const fields = (o) => isObject(o) ? Object.keys(o).filter((k) => !ID.test(k)).slice(0, 30).map((k) => k.slice(0, 32)) : undefined;
       const gear = (eq) => {
         if (!isObject(eq)) return undefined;
         const out = {};
@@ -72,8 +71,7 @@ public enum CollectorScript {
             if (isObject(x) && typeof x.name === 'string') st[`imbuements.${i}.name`] = x.name.slice(0, 32);
           });
           else stats(item.imbuements, st, 'imbuements.');
-          out[slot.slice(0, 24)] = { name: typeof item.name === 'string' ? item.name.slice(0, 64) : undefined, stats: st,
-                                     fields: fields(item), attrFields: fields(item.attrs) };
+          out[slot.slice(0, 24)] = { name: typeof item.name === 'string' ? item.name.slice(0, 64) : undefined, stats: st };
         }
         return out;
       };
@@ -98,7 +96,10 @@ public enum CollectorScript {
           shielding: num(isObject(sk.shielding) ? sk.shielding.pct : undefined),
         };
         out.weaponAttack = weaponAttack(m.equipment);
-        out.gear = gear(m.equipment);
+        // Gear rarely changes: sent when it does (the app keeps the last one), not in every frame.
+        const g = gear(m.equipment), key = typeof m.name === 'string' ? m.name : '';
+        const text = g === undefined ? '' : JSON.stringify(g);
+        if (text !== sentGear.get(key)) { out.gear = g; sentGear.set(key, text); }
         out.kit = Array.isArray(m.kit) ? m.kit.slice(0, 24).map((k) => pick(k, ['name', 'mana', 'cooldownMs'])) : [];
         return out;
       };
@@ -178,13 +179,15 @@ public enum CollectorScript {
       // by creature name. Creature ids only map to names here (from `spawn`); they never leave the page.
       const COMBAT = /"(mhit|mcast|spawn|death)"/;
       const names = new Map();
+      const sentGear = new Map();
       let hits = null;
       const tally = (d) => {
         if (!Array.isArray(d.events)) return;
         for (const e of d.events.slice(0, 500)) {
           if (!isObject(e)) continue;
           if (e.kind === 'spawn' && typeof e.name === 'string') {
-            if (names.size > 2000) names.clear();
+            // A Map keeps insertion order: drop the oldest spawns, not the creatures still alive on screen.
+            if (names.size > 2000) { let n = 0; for (const id of names.keys()) { names.delete(id); if (++n >= 500) break; } }
             names.set(e.id, e.name.slice(0, 40));
             continue;
           }
@@ -233,7 +236,7 @@ public enum CollectorScript {
         eventos_result: (d) => ({ eventos: eventos(d.state) }),
         resume: (d) => ({ huntId: d.huntId, battleConfigs: BATTLE(d.battleConfigs), huntBestiary: counters(d.meta), state: state(d.state), analyzer: pick(d.analyzer, ANALYZER),
                           offline: pick(d.offline, OFFLINE), training: d.training === true }),
-        hunt_started: (d) => ({ huntId: d.huntId, state: state(d.state), training: d.training === true }),
+        hunt_started: (d) => { names.clear(); return { huntId: d.huntId, state: state(d.state), training: d.training === true }; },
         frame: (d) => {
           tally(d);
           const out = { state: state(d.state), analyzer: pick(d.analyzer, ANALYZER), eventosProgresso: progress(d.eventosProgresso), hits: hits || undefined };
@@ -267,15 +270,20 @@ public enum CollectorScript {
 
       const Native = window.WebSocket;
       if (typeof Native !== 'function') return;
+      // The account is offline only when its last game socket closes: a second socket (or a reconnect that opens the
+      // new one before the old one closes) must not mark it disconnected.
+      let open = 0;
       const watch = (socket, url) => {
         try {
           if (!/(^|\.)tibidle\.com$/.test(new URL(url, location.href).hostname)) return;
+          open += 1;
           socket.addEventListener('message', (event) => { try { handle(event.data); } catch (_) {} });
-          socket.addEventListener('close', () => post('_closed'));
+          socket.addEventListener('close', () => { open = Math.max(0, open - 1); if (open === 0) post('_closed'); });
         } catch (_) {}
       };
+      // Reflect.construct keeps `new.target`, so a subclass of WebSocket (reconnecting libraries) still gets its methods.
       const Wrapped = function WebSocket(url, protocols) {
-        const socket = protocols === undefined ? new Native(url) : new Native(url, protocols);
+        const socket = Reflect.construct(Native, protocols === undefined ? [url] : [url, protocols], new.target || Native);
         watch(socket, url);
         return socket;
       };

@@ -27,11 +27,19 @@ Cada pessoa entra com suas próprias contas diretamente no site do jogo. Não h�
 5. **Seleção:** use a aba, o título do bloco ou clique no jogo. Som (`⇧⌘M`) e Recarregar (`⌘R`) atuam na conta selecionada; `⌘1` a `⌘4` selecionam as posições atuais.
 6. **Dashboard:** **Dashboard → Abrir dashboard** (`⇧⌘D`).
 
-Também há zoom por conta (`⌘+`, `⌘-`, `⌘0`), tela cheia (`⌃⌘F`) e **Limpar sessão**, que apaga cookies e dados só daquele perfil. Cada aba tem seu próprio perfil de navegador (cookies e armazenamento isolados), e páginas ocultas continuam rodando em velocidade normal. Trocar de visualização ou reorganizar não recarrega as páginas. Fechar a janela encerra o aplicativo e mantém seus dados.
+Também há zoom por conta (`⌘+` ou `⌘=`, `⌘-`, `⌘0`), salvo para cada tamanho de tela: a mesma conta pode ter um zoom menor no bloco pequeno do 1 + 3 e o normal sozinha. Há ainda tela cheia (`⌃⌘F`) e **Limpar sessão**, que apaga cookies e dados só daquele perfil. Cada aba tem seu próprio perfil de navegador (cookies e armazenamento isolados), e páginas ocultas continuam rodando em velocidade normal. Trocar de visualização ou reorganizar não recarrega as páginas. Fechar a janela encerra o aplicativo e mantém seus dados.
+
+Uma bolinha na aba e no título de cada bloco mostra o estado da conta: verde caçando, dourada na cidade, laranja sem dados do jogo há mais de 90 s, vermelha quando a página caiu ou a sessão foi aberta em outro lugar, cinza desconectada. O ícone no Dock mostra quantos avisos há no painel de atenção. As contas carregam uma de cada vez ao abrir o app, a selecionada primeiro. Se a página de uma conta cai (o processo do navegador fecha), o app a recarrega sozinho, até 3 vezes em 10 minutos. Alertas do jogo (`alert`, `confirm`) aparecem sobre a janela, com a conta que pediu selecionada, sem travar as outras.
+
+**Visualizar → Cores em sRGB** desenha as páginas em sRGB em vez do perfil de cor do monitor. Em alguns monitores (wide gamut, modo escalado), a conversão de cores ocupa boa parte do processo de GPU do WebKit; vale testar se o Mac esquenta com as 4 contas na tela.
 
 ## Dashboard de hunts
 
-Abra em **Dashboard → Abrir dashboard** ou, de outro aparelho na mesma rede (celular, tablet), pelo endereço mostrado na barra inferior do app, por exemplo `http://192.168.0.10:8787` (**Dashboard → Copiar endereço para a rede local**). Se o macOS perguntar se o app pode aceitar conexões de entrada, permita. A página atualiza sozinha.
+Abra em **Dashboard → Abrir dashboard** ou, de outro aparelho na mesma rede (celular, tablet), pelo endereço mostrado na barra inferior do app, por exemplo `http://192.168.0.10:8787` (**Dashboard → Copiar endereço para a rede local**). Se o macOS perguntar se o app pode aceitar conexões de entrada, permita. Para usar só neste Mac, desligue **Dashboard → Acessível pela rede local**.
+
+A página atualiza no lugar: cliques, texto selecionado e rolagem não se perdem a cada atualização. Com a aba oculta ela para de buscar dados e volta na hora ao reaparecer; as listas de hunts só são baixadas de novo quando uma hunt termina, e as respostas vão comprimidas. Quando o gerenciador não responde, os números ficam esmaecidos com a hora dos últimos dados.
+
+O título da aba mostra quantos avisos há, e o ícone ganha a cor do mais grave. No celular, cada cartão mostra só o essencial (status, XP/h, lucro/h, risco e o principal aviso); toque em **Ver o cartão completo** para o resto. Em **Adicionar à Tela de Início** o dashboard abre em tela cheia, com o ícone do app.
 
 ### No topo
 
@@ -40,9 +48,10 @@ Abra em **Dashboard → Abrir dashboard** ou, de outro aparelho na mesma rede (c
   - missão pronta para resgatar, sequência semanal em risco, recompensa do calendário de login;
   - mochila ou bolsa de chaves cheia (chaves que caem com a bolsa cheia se perdem);
   - hunt que terminou por morte (com quem mais machucou no último minuto), sem gold ou com cap cheio; conta parada na cidade; sessão aberta em outro lugar;
+  - conta caçando que parou de mandar dados há mais de 90 s (a página pode ter travado; notifica depois de 5 min), ou cuja página caiu e está sendo recarregada;
   - invasão com inscrição aberta sem você ter entrado, ou começando em até 15 min;
-  - lucro 20% abaixo da sua melhor hunt recente no mapa, com o setup mudado;
-  - skill, wand ou rod de um elemento que os monstros resistem (menos de 50% do dano), com a arma que rende mais; membro com menos de 10% de mana em média;
+  - lucro 20% abaixo do que o seu melhor setup costuma render no mapa (mediana de 2 hunts ou mais com o mesmo setup), com o setup mudado;
+  - skill, wand ou rod de um elemento que os monstros resistem (menos de 50% do dano, e só quando a maior parte do dano da hunt foi em monstros de resistência conhecida), com a arma que rende mais; membro com menos de 10% de mana em média;
   - **hunt arriscada:** alguém chegou a menos de 30% da vida, ou um golpe corpo a corpo leva 35% ou mais da vida do knight, com a criatura que mais machuca;
   - **risco de morte** de 5%/h ou mais (veja abaixo), com o membro mais exposto.
 - **Ignorar avisos:** cada conselho de setup (elemento ou arma, mana, hunt arriscada, setup diferente da melhor hunt) tem **ignorar nesta hunt** ou **sempre**. Os ignorados saem do painel e das notificações e ficam listados embaixo, com **reativar**. Mudou a arma, o aviso volta, pois é outro aviso. Só funciona no dashboard aberto neste Mac.
@@ -57,16 +66,17 @@ A chance de alguém da party morrer na próxima hora, em `~X%/h`. É uma previs�
 
 - a cada quadro (cerca de 3 s), o app guarda, por membro, a vida no começo da janela e quanto dela foi perdido até o fim, já descontada a cura (um knight pode levar 1600 em 3 s e curar quase tudo);
 - cada janela é comparada com as que começaram com a vida parecida: com 40% de vida a party está sendo curada forte e quase nunca perde mais, as quedas grandes vêm de perto da vida cheia;
-- as 10% maiores perdas dos últimos 20 minutos (os mais recentes pesam mais) ganham uma cauda de Pareto generalizada, que estima a chance de uma janela pior do que qualquer uma já vista, com um teto quando os dados mostram que o dano não passa muito de certo ponto;
+- a forma da cauda vem de todas as janelas do membro e a escala, das janelas com vida parecida (80 pelo menos): as 10% maiores perdas dos últimos 20 minutos, nunca menos de 10 (os mais recentes pesam mais), ganham uma cauda de Pareto generalizada, que estima a chance de uma janela pior do que qualquer uma já vista, com um teto quando os dados mostram que o dano não passa muito de certo ponto;
 - a chance de uma janela levar mais do que a vida que o membro tinha, somada por uma hora de janelas, é o risco ao vivo;
-- esse número é juntado com o **histórico do mapa** perto do nível (mortes por hora de todas as contas): o ao vivo vale como 10 h de hunt, então um mapa com centenas de horas sem morte não vira alerta por um susto, e um mapa novo segue o que está acontecendo. Nos primeiros 10 minutos, só o histórico conta;
-- cada hunt encerrada guarda o que a previsão esperava; depois de 10 hunts, a razão entre mortes vistas e previstas corrige o número (entre ¼ e 4×).
+- cada janela conta o tempo que durou de fato: uma pausa não vira janela nem dilui a hora, e cada membro é seguido pelo nome, então trocar de posição na party não parece perda de vida;
+- esse número é juntado com o **histórico do mapa** perto do nível (mortes por hora de todas as contas): o ao vivo vale como 10 h de hunt no começo e cresce com a hunt (3 vezes as horas medidas, até 30 h), então um mapa com centenas de horas sem morte não vira alerta por um susto, e um mapa novo segue o que está acontecendo; um risco de 5%/h ou mais que dura 30 min não cai abaixo de um terço dele, por mais tranquilo que seja o histórico. Nos primeiros 10 minutos, só o histórico conta;
+- cada hunt encerrada guarda o que a previsão esperava; depois de 10 hunts, a razão entre mortes vistas e previstas corrige o número (entre ¼ e 4×). Quando o modelo muda, a contagem recomeça, porque as previsões antigas não valem para ele.
 
 Acima de 5%/h o número fica amarelo e entra no painel de atenção; acima de 10%/h fica vermelho e gera notificação. A vida é lida a cada 3 s, então uma queda e uma cura dentro da mesma janela não aparecem: o risco de um golpe que mata mais rápido que isso fica subestimado.
 
 ### Painel da conta
 
-- **Hunt:** a melhor hunt recente da conta nesse mapa (lucro/h de lá e de agora, o que mudou no setup de batalha, supplies por membro, botão para ver o setup completo e salvar como preset); o histórico das contas nesse mapa no nível atual ±2, para separar "é o nível" de "é o setup"; o bestiário do mapa com os marcos e o tempo até cada um; kills e drops.
+- **Hunt:** o que o melhor setup da conta costuma render nesse mapa (a mediana das hunts com esse setup, 2 ou mais; sem isso, a mediana de todas) e o lucro/h de agora, o que mudou no setup de batalha, supplies por membro, botão para ver o setup completo e salvar como preset); o histórico das contas nesse mapa no nível atual ±2, para separar "é o nível" de "é o setup"; o bestiário do mapa com os marcos e o tempo até cada um; kills e drops.
 - **Risco:** o risco de morte por membro (maior perda de vida em 3 s, vida mínima); os **momentos de perigo** da hunt, cada vez que alguém caiu abaixo de 40% da vida, com o horário, até onde caiu, quanto tempo levou para passar de 60% e as criaturas que mais bateram nos 15 s antes; e **cura e supplies**: cura feita contra o dano recebido e gold de supplies por 1.000 de dano recebido, comparado com a mediana e a melhor hunt do mapa perto do seu nível (30% acima do normal fica amarelo). Os momentos de perigo também ficam nos detalhes de cada hunt encerrada.
 - **Nível:** XP que falta, tempo no ritmo atual e, nas hunts da conta perto desse nível, XP/h, lucro/h e o gold ganho ou gasto até subir; e **onde suas contas caçaram** no nível ±5 (qualquer conta, últimos 60 dias): XP/h, lucro/h e dano recebido/h por mapa, para as contas de trás seguirem as da frente.
 - **Skills:** dano estimado de cada skill contra os monstros da hunt, avisos de elemento resistido e sugestões de troca com o ganho e o custo de mana (veja [Análise de skills](#análise-de-skills)).
@@ -78,16 +88,17 @@ Acima de 5%/h o número fica amarelo e entra no painel de atenção; acima de 10
 
 - **Mesma hunt, lado a lado:** quando duas ou mais contas caçam no mesmo mapa, compara lucro, loot, supplies, XP, kills, dano causado e recebido, cura e as razões por kill e por XP; fica em vermelho o que está 20% ou mais pior que a melhor conta.
 - **Ranking de hunts** por mapa: XP/h, lucro/h, kills/h, dano recebido/h, supplies/h e mortes, por conta ou todas, ordenado por lucro, XP, kills, menos dano ou menos supplies. Nas hunts com golpes medidos, a dica da coluna de dano mostra quanto foi dreno de vida.
-- **Esta semana:** XP, lucro, tempo caçado, níveis, hunts e mortes de cada conta nos últimos 7 dias, com a variação em relação aos 7 anteriores.
+- **Esta semana:** XP, lucro, tempo caçado, níveis, hunts e mortes de cada conta nos últimos 7 dias, com a variação em relação aos 7 anteriores. Uma hunt que passa da meia-noite divide XP, lucro e kills entre os dois dias pelo tempo em cada um; o fim, as mortes e os níveis contam no dia em que ela terminou.
 - **Gráficos:** XP/h e lucro/h nas últimas 1 h a 7 dias, e lucro por nível em cada mapa (um ponto por hunt), com tabela.
-- **Totais por dia** e **hunts encerradas** (duração, motivo, level, XP, loot, supplies, mortes). Clicar numa hunt mostra os detalhes, o setup de batalha com que ela rodou (comparado a outra hunt) e, se alguém morreu, **o último minuto antes da morte**: quem morreu, as criaturas que mais bateram, os elementos e quanto cada membro recebeu.
-- **CSV** do histórico de hunts e das amostras por minuto.
+- **Totais por dia** e **hunts encerradas** (duração, motivo, level, XP, loot, supplies, mortes), com filtros de conta, mapa e duração mínima, de 50 em 50. Clicar numa hunt mostra os detalhes, o setup de batalha com que ela rodou (comparado a outra hunt) e, se alguém morreu, **o último minuto antes da morte**: quem morreu, as criaturas que mais bateram, os elementos e quanto cada membro recebeu.
+- **CSV** do histórico de hunts (todas, direto do banco) e das amostras por minuto.
+- **Ao longo do tempo:** XP/h e lucro/h de cada conta. Nos primeiros 5 minutos de uma hunt o lucro por hora fica de fora (um drop em dois minutos vira milhões por hora e achatava o gráfico); acima de 24 h os pontos são agrupados. ▼ marca uma hunt que terminou em morte e um traço embaixo marca quando alguém ficou abaixo de 40% da vida.
 
 ### Análise de skills
 
-O app combina as skills equipadas e os níveis de cada personagem (nível treinado mais o bônus de itens e bestiário), as fórmulas e elementos das magias (`https://play.tibidle.com/spells`) e as resistências de cada monstro abatido (`/bestiary/creature`, guardadas em `creatures-cache.json`). Com isso simula a rotação da party (a primeira skill da prioridade que está pronta e atende ao mínimo de criaturas) e estima o dano por segundo.
+O app combina as skills equipadas e os níveis de cada personagem (nível treinado mais o bônus de itens e bestiário), as fórmulas e elementos das magias (`https://play.tibidle.com/spells`) e as resistências de cada monstro abatido (`/bestiary/creature`, guardadas em `creatures-cache.json`). Com isso simula a rotação da party (a primeira skill da prioridade que está pronta e atende ao mínimo de criaturas) e estima o dano por segundo. Cada skill respeita a recarga dela, a do grupo (4 s depois de uma ultimate) e a do grupo secundário: os strong strikes dividem 8 s e as ultimates 40 s, então dois deles nunca saem em seguida. O elemento pesa cada monstro pela vida dele vezes os kills (um monstro com dez vezes a vida pesa como dez kills de um fraco).
 
-O dano é uma **estimativa**, porque o app não conhece as regras internas do servidor. Ele aprende com as suas hunts: ao fim de cada hunt iniciada com o app aberto, compara o dano previsto com o real e, com 3 hunts ou mais, aplica um fator de correção ("calibrado com N hunts"). Quando a mana média de um membro fica abaixo de 25%, as sugestões que gastam mais mana vêm com um aviso. Limitações: o jogo só informa o dano total da party, o ataque da arma pode não vir nos dados (assume 40) e buffs e resistências extras não entram no modelo.
+O dano é uma **estimativa**, porque o app não conhece as regras internas do servidor. Ele aprende com as suas hunts: ao fim de cada hunt iniciada com o app aberto, compara o dano previsto com o real e, com 3 hunts ou mais, aplica um fator de correção ("calibrado com N hunts"). Quando a mana média de um membro fica abaixo de 25%, as sugestões que gastam mais mana vêm com um aviso e o ganho mostrado é o que elas rendem com a mesma mana; a que não compensa sai. Limitações: o jogo só informa o dano total da party, o ataque da arma pode não vir nos dados (assume 40) e buffs e resistências extras não entram no modelo.
 
 ### Conselheiro de equipamento
 
@@ -95,9 +106,9 @@ O dano é uma **estimativa**, porque o app não conhece as regras internas do se
 
 **Melhorias.** Com o dano medido por membro, cada membro da party é avaliado contra o que ele recebe (o corpo a corpo cai só no knight; a magia, em quem ela atingiu); antes disso, só quem mais apanha (menor HP média, ou o knight) contra o dano da party. Cada slot de defesa é comparado com o melhor item que suas outras contas usam na mesma vocação (no jogo, item só exige vocação). O ganho é dado em **dano a menos por segundo**, pelas regras de combate da wiki:
 
-- armadura tira em média 0,75 por ponto de cada golpe corpo a corpo;
+- armadura tira em média 0,75 por ponto de cada golpe corpo a corpo, nunca mais que o golpe;
 - o escudo bloqueia 0,06 × (Escudo/4 + 2,23) × defesa, até 1 golpe por segundo;
-- a proteção física age no golpe inteiro, e também no sangramento e na magia física;
+- a proteção física age no golpe inteiro, e também no sangramento e na magia física; trocar de 5% para 15% poupa 10% do golpe bruto, não 15% do que sobra;
 - a magia só sente a proteção do elemento dela; dreno de vida não tem proteção.
 
 Com 2 min e 20 golpes medidos, a divisão entre corpo a corpo e magia é a real; antes disso, uma divisão típica. A wand ou rod de sorcerer e druid é comparada com o elemento que os monstros da hunt resistem, indicando a de outra conta (ou o elemento) que rende mais. As até 4 trocas de maior impacto aparecem primeiro.
@@ -114,7 +125,7 @@ O app **não aplica** nada no jogo. Salvar, importar, renomear e excluir só fun
 
 ### Notificações
 
-O app avisa pelo macOS quando algo novo e importante entra no painel de atenção: missão pronta, sequência em risco, login a resgatar, invasão, mochila ou chaves cheias, hunt que acabou mal, hunt em que alguém chegou a menos de 15% da vida e risco de morte de 10%/h ou mais. Liga e desliga em **Dashboard → Notificar eventos importantes**. É local e só funciona no `.app` instalado.
+O app avisa pelo macOS quando algo novo e importante entra no painel de atenção: missão pronta, sequência em risco, login a resgatar, invasão, mochila ou chaves cheias, hunt que acabou mal, hunt em que alguém chegou a menos de 15% da vida, risco de morte de 10%/h ou mais e conta sem dados há 5 min. O mesmo aviso não toca de novo por 1 hora (12 horas para missões, sequência e login), mesmo que suma por um instante numa reconexão ou que o risco oscile em torno do limite; logo depois de o Mac acordar, o app espera as páginas reconectarem antes de avisar. Clicar na notificação abre o app na conta. Liga e desliga em **Dashboard → Notificar eventos importantes**. É local e só funciona no `.app` instalado.
 
 ## Privacidade e conexões
 
@@ -124,14 +135,14 @@ Um script somente leitura (`Sources/TibidleCore/CollectorScript.swift`) roda ape
 
 - números da hunt (XP, loot, supplies, kills, dano, cura) e o status da party (vida, mana, level, skills com o bônus);
 - as missões diárias, a sequência e as metas semanais (só progresso) e o horário da invasão do dia;
-- do equipamento, por slot, o nome e os números do item e os nomes dos campos, nunca ids;
+- do equipamento, por slot, o nome e os números do item, nunca ids, e só quando muda;
 - dos golpes que a party recebe (eventos `mhit`, `mcast` e `death`), só a soma por criatura (pelo nome), por elemento e por posição na party (0 a 7), nunca ids de criaturas ou personagens.
 
 O resto, inclusive o token de sessão, é descartado. Os testes em `Tests/TibidleCoreTests/DashboardTests.swift` executam esse script e verificam isso.
 
 ### Rede local
 
-A dashboard não tem senha e, pela rede, é somente leitura: **qualquer pessoa na mesma rede** pode ver os dados de hunt (nomes dos personagens, levels, XP, gold) e os presets. Ela não expõe logins nem cookies e não permite ações no jogo. A única escrita, a biblioteca de presets, é aceita só de `localhost`. Use em redes de confiança.
+A dashboard não tem senha e, pela rede, é somente leitura: **qualquer pessoa na mesma rede** pode ver os dados de hunt (nomes dos personagens, levels, XP, gold) e os presets. Ela não expõe logins nem cookies e não permite ações no jogo. As únicas escritas, a biblioteca de presets e os avisos ignorados, são aceitas só de `localhost`. Só responde a endereços de rede local (IP, `localhost`, `*.local`), o que impede um site aberto no Mac de ler os dados pelo truque de DNS rebinding. Em redes que não são de confiança, desligue **Dashboard → Acessível pela rede local**.
 
 ### O que o app baixa
 
@@ -144,6 +155,8 @@ Tudo sem cookies nem login, com cópia local para funcionar offline:
 | `play.tibidle.com/hunts/select` | Marcos do bestiário e monstros de cada mapa | a cada 24 h |
 | `play.tibidle.com/bestiary/creature` | Resistências dos monstros abatidos | sob demanda |
 | `api.github.com` (última release) | Aviso de versão nova; não baixa nem instala nada | 1 vez por dia |
+
+Quando um download falha, a próxima tentativa espera mais a cada vez (de 5 min até 6 h), em vez de repetir a cada poucos segundos.
 
 ### Dados das contas
 
@@ -193,10 +206,10 @@ O app é assinado *ad hoc* (sem Developer ID); um pacote baixado da internet pre
 | `Sources/TibidleMultiManager/Notifier.swift` | Notificações do macOS |
 | `Sources/TibidleCore/CollectorScript.swift` | Coletor somente leitura injetado no jogo |
 | `Sources/TibidleCore/DashboardStore.swift` | Estado ao vivo e histórico (SQLite) |
-| `Sources/TibidleCore/DashboardServer.swift`, `DashboardRouter.swift` | Servidor HTTP da rede local |
+| `Sources/TibidleCore/DashboardServer.swift`, `DashboardRouter.swift`, `Gzip.swift` | Servidor HTTP da rede local |
 | `Sources/TibidleCore/DashboardPage.swift` | Página da dashboard |
 | `Sources/TibidleCore/Attention.swift` | Painel "precisa de atenção" |
-| `Sources/TibidleCore/HuntInsights.swift` | Comparação com a melhor hunt recente |
+| `Sources/TibidleCore/HuntInsights.swift` | Comparação com o que o melhor setup costuma render |
 | `Sources/TibidleCore/SkillModel.swift`, `SkillDataLoader.swift` | Análise de skills e calibração |
 | `Sources/TibidleCore/GearAdvisor.swift` | Dano recebido medido e conselheiro de equipamento |
 | `Sources/TibidleCore/HuntCatalog.swift`, `HuntCatalogLoader.swift`, `MissionAdvisor.swift` | Lista de hunts e missões diárias |

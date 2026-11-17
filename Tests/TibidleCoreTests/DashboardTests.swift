@@ -73,9 +73,46 @@ final class CollectorScriptTests: XCTestCase {
         XCTAssertEqual(gear["weapon"]?["name"] as? String, "war hammer")
         XCTAssertEqual(gear["weapon"]?["stats"] as? [String: Int], ["tier": 2, "attrs.attack": 45, "attrs.defense": 10])
         XCTAssertEqual(gear["armor"]?["stats"] as? [String: AnyHashable], ["rarity": "rare", "attrs.armor": 12, "bonuses.maxHealth": 80])
-        XCTAssertEqual(gear["armor"]?["fields"] as? [String], ["name", "rarity", "note", "attrs", "bonuses"])
+        XCTAssertNil(gear["armor"]?["fields"], "field names were never read")
         let text = String(data: try! JSONSerialization.data(withJSONObject: member), encoding: .utf8)!
-        for forbidden in ["secret", "3001", "77", "free text"] { XCTAssertFalse(text.contains(forbidden), "\(forbidden) leaked") }
+        for forbidden in ["secret", "3001", "77", "free text", "note"] { XCTAssertFalse(text.contains(forbidden), "\(forbidden) leaked") }
+    }
+
+    func testSendsGearOnlyWhenItChanges() {
+        let (context, posts) = makeContext()
+        context.evaluateScript("""
+            var ws = new WebSocket('wss://play.tibidle.com/ws');
+            var frame = (armor) => JSON.stringify({ type: 'frame', data: { state: { party: [{ name: 'Zolp', equipment: { armor: { name: armor } } }] } } });
+            ws.receive(frame('knight armor')); now += 3000;
+            ws.receive(frame('knight armor')); now += 3000;
+            ws.receive(frame('golden armor'));
+            """)
+        let gear = posts().map { (((($0["data"] as! [String: Any])["state"] as! [String: Any])["party"] as! [[String: Any]])[0]["gear"] as? [String: [String: Any]]) }
+        XCTAssertEqual(gear.map { $0?["armor"]?["name"] as? String }, ["knight armor", nil, "golden armor"])
+    }
+
+    func testOfflineOnlyWhenTheLastSocketCloses() {
+        let (context, posts) = makeContext()
+        context.evaluateScript("""
+            var old = new WebSocket('wss://play.tibidle.com/ws');
+            var fresh = new WebSocket('wss://play.tibidle.com/ws');
+            old.close();
+            """)
+        XCTAssertTrue(posts().isEmpty, "the reconnect already opened a new socket")
+        context.evaluateScript("fresh.close()")
+        XCTAssertEqual(posts().map { $0["type"] as? String }, ["_closed"])
+    }
+
+    func testWebSocketSubclassesKeepTheirMethods() {
+        let (context, posts) = makeContext()
+        context.evaluateScript("""
+            class Reconnecting extends WebSocket { hello() { return 'hi'; } }
+            var ws = new Reconnecting('wss://play.tibidle.com/ws');
+            var said = ws.hello();
+            ws.receive(JSON.stringify({ type: 'session_takeover', data: {} }));
+            """)
+        XCTAssertEqual(context.evaluateScript("said")?.toString(), "hi")
+        XCTAssertEqual(posts().map { $0["type"] as? String }, ["session_takeover"])
     }
 
     func testForwardsInvasionScheduleOnly() {
@@ -166,7 +203,8 @@ final class DashboardStoreTests: XCTestCase {
         store.ingest(account: 1, json: #"{"type":"hunt_started","data":{"huntId":9,"state":{"party":[{"name":"Knight"},{"name":"Druid"}]}}}"#)
         for minute in 0..<3 {
             clock += 60
-            store.ingest(account: 1, json: #"{"type":"frame","data":{"analyzer":{"elapsedMs":\#((minute + 1) * 60000),"xpPerHour":1200,"lootGold":600,"suppliesGold":100,"xp":"20"}}}"#)
+            // The first sample is 4 min into the hunt (too early for a rate), the others 5 and 6 min in.
+            store.ingest(account: 1, json: #"{"type":"frame","data":{"analyzer":{"elapsedMs":\#((minute + 4) * 60000),"xpPerHour":1200,"lootGold":600,"suppliesGold":100,"xp":"20"}}}"#)
             clock += 5
             store.ingest(account: 1, json: #"{"type":"frame","data":{"analyzer":{"elapsedMs":1,"xpPerHour":1}}}"#) // throttled sample
         }
@@ -176,11 +214,13 @@ final class DashboardStoreTests: XCTestCase {
         XCTAssertEqual(account["label"] as? String, "B")
 
         let history = object(store.historyJSON(hours: 1))
-        let series = (history["series"] as! [String: [[Double]]])["1"]!
+        let series = (history["series"] as! [String: [[Any]]])["1"]!
         XCTAssertEqual(series.count, 3)
-        XCTAssertEqual(series[0][1], 1200)       // xp/h
-        XCTAssertEqual(series[0][2], 36000)      // 600 / (1/60 h)
-        XCTAssertEqual(series[0][3], 30000)      // (600 - 100) / (1/60 h)
+        XCTAssertEqual(series[0][1] as? Double, 1200)   // xp/h
+        XCTAssertTrue(series[0][2] is NSNull, "loot per hour in the first minutes is noise")
+        XCTAssertTrue(series[0][3] is NSNull)
+        XCTAssertEqual(series[1][2] as? Double, 7200)    // 600 / (5/60 h)
+        XCTAssertEqual(series[1][3] as? Double, 6000)    // (600 - 100) / (5/60 h)
 
         store.ingest(account: 1, json: #"{"type":"ended","data":{"summary":{"huntId":9,"reason":"death","balance":500,"deaths":1}}}"#)
         store.ingest(account: 1, json: #"{"type":"ended","data":{"summary":{"huntId":9,"reason":"death","balance":500,"deaths":1}}}"#)
@@ -250,7 +290,7 @@ final class DashboardStoreTests: XCTestCase {
         XCTAssertEqual(DashboardRouter.respond(method: "GET", target: "/api/hunts/setup?id=\(newer)&compare=\(older)", store: store).status, 200)
     }
 
-    func testInsightsCompareWithTheBestRecentHuntAndItsSetup() {
+    func testInsightsCompareWithWhatTheBestSetupUsuallyMakes() {
         let store = makeStore()
         store.setAccountNames(["A", "B", "C", "D"])
         func config(_ minimum: Int) -> String {
@@ -262,8 +302,10 @@ final class DashboardStoreTests: XCTestCase {
             clock += 60
             store.ingest(account: 1, json: #"{"type":"ended","data":{"summary":{"huntId":\#(map),"elapsedSec":\#(seconds),"level":{"start":\#(level),"end":\#(level)},"balance":\#(balance)}}}"#)
         }
-        hunt(minimum: 2, seconds: 7200, balance: 160_000)               // best: 80k/h
-        hunt(minimum: 3, seconds: 3600, balance: 50_000)
+        hunt(minimum: 2, seconds: 7200, balance: 160_000)               // 80k/h
+        hunt(minimum: 2, seconds: 3600, balance: 70_000)                // 70k/h
+        hunt(minimum: 2, seconds: 3600, balance: 60_000)                // 60k/h: this setup usually makes 70k/h
+        hunt(minimum: 3, seconds: 3600, balance: 120_000)               // one lucky hunt with another setup sets no bar
         hunt(minimum: 2, seconds: 3600, balance: 999_999, level: 95)    // too far from the current level
         hunt(minimum: 2, seconds: 3600, balance: 999_999, map: 7)       // another map
         store.ingest(account: 1, json: #"{"type":"welcome","data":{"battleConfigs":\#(config(5))}}"#)
@@ -272,14 +314,19 @@ final class DashboardStoreTests: XCTestCase {
 
         let state = object(store.stateJSON())
         let insights = (state["accounts"] as! [[String: Any]])[1]["insights"] as! [String: Any]
-        XCTAssertEqual((insights["reference"] as! [String: Any])["profitPerHour"] as? Int, 80_000)
+        let reference = insights["reference"] as! [String: Any]
+        XCTAssertEqual(reference["profitPerHour"] as? Int, 70_000, "the median of the setup's three hunts")
+        XCTAssertEqual(reference["runs"] as? Int, 3)
+        XCTAssertEqual(reference["hours"] as? Double, 1, "the hunt closest to the median stands for it")
         XCTAssertEqual(insights["profitPerHour"] as? Int, 40_000)
-        XCTAssertEqual(insights["drop"] as? Double, 0.5)
+        XCTAssertEqual(insights["drop"] as! Double, 30.0 / 70, accuracy: 1e-9)
         let changes = insights["changes"] as! [[String: Any]]
         XCTAssertEqual(changes.first?["differences"] as? [String], ["Energy Wave: mínimo de criaturas de 2 para 5"])
         XCTAssertNil(insights["takenPerKill"], "too few kills to divide by")
         let attention = state["attention"] as! [[String: Any]]
-        XCTAssertTrue(attention.contains { ($0["text"] as? String)?.contains("50% abaixo da sua melhor hunt recente aqui (80k/h") == true })
+        XCTAssertTrue(attention.contains {
+            ($0["text"] as? String)?.contains("43% abaixo do que o seu melhor setup costuma render aqui (70k/h, mediana de 3 hunts)") == true
+        })
 
         // Too early in the hunt to judge the rates: the comparison shows, the warning does not.
         store.ingest(account: 1, json: #"{"type":"frame","data":{"analyzer":{"elapsedMs":600000,"lootGold":1,"suppliesGold":50000}}}"#)
@@ -312,10 +359,14 @@ final class DashboardStoreTests: XCTestCase {
         let live = ((object(store.stateJSON())["accounts"] as! [[String: Any]])[0]["state"] as! [String: Any])["party"] as! [[String: Any]]
         XCTAssertEqual(live[0]["hpAverage"] as? Double ?? 0, 0.7, accuracy: 1e-9)
         store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":151,"elapsedSec":60,"killsTotal":100,"damageTaken":25000}}}"#)
-        let member = ((object(store.huntsJSON(limit: 1))["hunts"] as! [[String: Any]])[0]["members"] as! [[String: Any]])[0]
+        let hunt = (object(store.huntsJSON(limit: 1))["hunts"] as! [[String: Any]])[0]
+        let member = (hunt["members"] as! [[String: Any]])[0]
         XCTAssertEqual(member["hpLowest"] as? Double, 0.4)
-        XCTAssertEqual((member["gear"] as? [String: [String: Any]])?["armor"]?["name"] as? String, "knight armor")
-        XCTAssertNil((member["gear"] as? [String: [String: Any]])?["armor"]?["fields"], "field names are only for the live view")
+        // The gear stays in the database (to compare hunts later) but not in the lists, which never show it.
+        XCTAssertNil(member["gear"])
+        let stored = ((store.storedSummary(id: hunt["id"] as! Int)?["members"] as? [[String: Any]])?[0]["gear"]) as? [String: [String: Any]]
+        XCTAssertEqual(stored?["armor"]?["name"] as? String, "knight armor")
+        XCTAssertNil(stored?["armor"]?["fields"], "field names are only for the live view")
         XCTAssertEqual(HuntInsights.takenPerKill(["killsTotal": 100, "damageTaken": 25000]), 250)
     }
 
@@ -357,6 +408,7 @@ final class DashboardStoreTests: XCTestCase {
         do {
             let store = DashboardStore(databaseURL: url, now: { [unowned self] in clock })
             store.ingest(account: 0, json: #"{"type":"ended","data":{"summary":{"huntId":1,"balance":5}}}"#)
+            store.flush()   // what the app does when it quits
         }
         let reopened = DashboardStore(databaseURL: url, now: { [unowned self] in clock })
         XCTAssertEqual((object(reopened.huntsJSON(limit: 5))["hunts"] as! [[String: Any]]).count, 1)

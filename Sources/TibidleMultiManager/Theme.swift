@@ -26,12 +26,33 @@ enum Theme {
     static let tabBorder = NSColor(hex: 0x343945)
     static let selectedBackground = NSColor(hex: 0x413620)
     static let selectedBorder = NSColor(hex: 0xD3AC55)
+
+    // Account status dots (tabs and pane headers).
+    static let statusHunting = NSColor(hex: 0x5CB85C)
+    static let statusCity = NSColor(hex: 0xD3AC55)
+    static let statusStale = NSColor(hex: 0xE8913A)
+    static let statusDown = NSColor(hex: 0xE05252)
+    static let statusOffline = NSColor(hex: 0x737D8E)
+
+    /// The dot for a dashboard account status; nil before the page has said anything.
+    static func statusColor(_ status: String?) -> NSColor? {
+        switch status {
+        case "hunting": return statusHunting
+        case "city": return statusCity
+        case "stale": return statusStale
+        case "crashed", "replaced": return statusDown
+        case "offline": return statusOffline
+        default: return nil
+        }
+    }
 }
 
 /// Flat rounded button matching the dark/gold look of the Windows version.
 class FlatButton: NSButton {
     var fill = Theme.buttonBackground { didSet { refresh() } }
     var stroke = Theme.buttonBorder { didSet { refresh() } }
+    /// A small colored dot before the title (the account's status).
+    var dot: NSColor? { didSet { if dot != oldValue { refresh() } } }
     var padding = NSSize(width: 14, height: 7)
     private var hovering = false { didSet { refresh() } }
 
@@ -73,9 +94,14 @@ class FlatButton: NSButton {
         alphaValue = isEnabled ? 1 : 0.45
         let style = NSMutableParagraphStyle()
         style.alignment = .center
-        attributedTitle = NSAttributedString(string: title, attributes: [
+        let text = NSMutableAttributedString()
+        if let dot {
+            text.append(NSAttributedString(string: "● ", attributes: [.foregroundColor: dot, .font: NSFont.systemFont(ofSize: 10), .paragraphStyle: style]))
+        }
+        text.append(NSAttributedString(string: title, attributes: [
             .foregroundColor: Theme.gold, .font: NSFont.systemFont(ofSize: 13), .paragraphStyle: style,
-        ])
+        ]))
+        attributedTitle = text
         invalidateIntrinsicContentSize()
     }
 }

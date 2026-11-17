@@ -20,6 +20,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/TibidleMultiManager"
 
 swift scripts/make-icon.swift "$WORK/icon.png"
+# The dashboard serves it for "Adicionar à Tela de Início" on a phone.
+sips -z 180 180 "$WORK/icon.png" --out "$APP/Contents/Resources/apple-touch-icon.png" >/dev/null
 ICONSET="$WORK/AppIcon.iconset"
 mkdir -p "$ICONSET"
 for s in 16 32 128 256 512; do

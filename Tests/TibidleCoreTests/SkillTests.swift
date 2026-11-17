@@ -286,7 +286,9 @@ final class SkillAttentionTests: XCTestCase {
     func testWarnsAboutResistedSpellsThatFireAndMembersOutOfMana() {
         let entry: [String: Any] = ["skills": ["members": [
             ["name": "Crovax", "vocation": "SORCERER", "manaAverage": 0.06, "manaPerMinute": 3075, "skills": [
-                ["name": "Great Fire Wave", "element": "COMBAT_FIREDAMAGE", "multiplier": 0.15, "dps": 16.5],
+                ["name": "Great Fire Wave", "element": "COMBAT_FIREDAMAGE", "multiplier": 0.15, "dps": 16.5, "coverage": 0.9],
+                // Only a few kills of known resistance behind it: too little to call.
+                ["name": "Flame Strike", "element": "COMBAT_FIREDAMAGE", "multiplier": 0.1, "dps": 20, "coverage": 0.2],
                 ["name": "sudden death rune", "element": "COMBAT_DEATHDAMAGE", "multiplier": 0.2, "dps": 0],   // never fires: no warning
                 ["name": "Energy Wave", "element": "COMBAT_ENERGYDAMAGE", "multiplier": 1.1, "dps": 92]]],
             ["name": "Crovax", "vocation": "KNIGHT", "manaAverage": 0.16, "manaPerMinute": 4610, "skills": []],

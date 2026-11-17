@@ -10,24 +10,30 @@ public struct HuntCatalog: Equatable {
     }
 
     public let hunts: [Hunt]
+    /// `hunt(id:)` runs in loops over every finished hunt (lists, ranking): a lookup, not a scan.
+    private let byId: [Int: Hunt]
 
     public static let empty = HuntCatalog(hunts: [])
     public static let url = URL(string: "https://play.tibidle.com/hunts")!
 
-    public init(hunts: [Hunt]) { self.hunts = hunts }
+    public init(hunts: [Hunt]) {
+        self.hunts = hunts
+        byId = Dictionary(hunts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    }
 
     public init?(json: Data) {
         guard let root = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
               let list = root["hunts"] as? [[String: Any]], !list.isEmpty else { return nil }
-        hunts = list.compactMap { item in
+        let hunts = list.compactMap { item -> Hunt? in
             guard let id = item["id"] as? Int, let title = item["title"] as? String else { return nil }
             return Hunt(id: id, title: title, island: item["island"] as? String ?? "",
                         monsters: (item["monsters"] as? [String]) ?? [])
         }
         if hunts.isEmpty { return nil }
+        self.init(hunts: hunts)
     }
 
-    public func hunt(id: Int) -> Hunt? { hunts.first { $0.id == id } }
+    public func hunt(id: Int) -> Hunt? { byId[id] }
 
     static func key(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
 

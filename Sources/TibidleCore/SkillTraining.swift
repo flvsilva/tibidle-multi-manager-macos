@@ -13,20 +13,21 @@ public struct SkillTraining {
     /// Less than this and the pace says nothing yet.
     static let minSeconds = 3 * 60.0
 
-    private var points: [Int: [String: [Point]]] = [:]
-    private var members: [Int: (name: String, vocation: String)] = [:]
+    /// Per member (`PartyKey`), so another character taking a slot neither inherits the pace nor reads as a loss.
+    private var points: [String: [String: [Point]]] = [:]
+    private var members: [String: (name: String, vocation: String, position: Int)] = [:]
 
     public init() {}
 
     /// One posted frame. Progress is the level times 100 plus the percent, so a level up keeps it going up.
     public mutating func add(party: [[String: Any]], at date: Date) {
-        for (position, member) in party.enumerated() {
+        for (position, key, member) in PartyKey.keyed(party) {
             guard let levels = member["skillLevels"] as? [String: Any], let pcts = member["skillProgress"] as? [String: Any] else { continue }
-            members[position] = (member["name"] as? String ?? "", member["vocation"] as? String ?? "")
+            members[key] = (member["name"] as? String ?? "", member["vocation"] as? String ?? "", position)
             for skill in Self.skills {
                 guard let level = HuntInsights.number(levels[skill]), let pct = HuntInsights.number(pcts[skill]) else { continue }
                 let progress = level * 100 + min(100, max(0, pct))
-                var list = points[position]?[skill] ?? []
+                var list = points[key]?[skill] ?? []
                 // A loss (a death takes skill) starts over; otherwise a point per change, or per minute while it stays.
                 if let last = list.last, progress < last.progress { list = [] }
                 if list.count > 1, list[list.count - 1].progress == progress, list[list.count - 2].progress == progress,
@@ -36,7 +37,7 @@ public struct SkillTraining {
                     list.append(Point(date: date, progress: progress))
                 }
                 list.removeAll { date.timeIntervalSince($0.date) > Self.keep }
-                points[position, default: [:]][skill] = list
+                points[key, default: [:]][skill] = list
             }
         }
     }
@@ -66,7 +67,7 @@ public struct SkillTraining {
     /// Per member, the skills going up: level, percent, percent per hour, the minutes looked at and the time to the next level.
     public func summary() -> [[String: Any]]? {
         var out: [[String: Any]] = []
-        for (position, skills) in points.sorted(by: { $0.key < $1.key }) {
+        for (key, skills) in points.sorted(by: { (members[$0.key]?.position ?? 0, $0.key) < (members[$1.key]?.position ?? 0, $1.key) }) {
             var rows: [[String: Any]] = []
             for skill in Self.skills {
                 guard let list = skills[skill], let latest = list.last, let pace = Self.pace(list) else { continue }
@@ -76,8 +77,8 @@ public struct SkillTraining {
                              "nextInSec": (100 - pct) / pace.perHour * 3600])
             }
             guard !rows.isEmpty else { continue }
-            let member = members[position]
-            out.append(["position": position, "name": member?.name ?? "", "vocation": member?.vocation ?? "", "skills": rows])
+            let member = members[key]
+            out.append(["position": member?.position ?? 0, "name": member?.name ?? "", "vocation": member?.vocation ?? "", "skills": rows])
         }
         return out.isEmpty ? nil : out
     }

@@ -61,9 +61,9 @@ final class GearTests: XCTestCase {
         XCTAssertEqual(combats[1]?.elements, ["earth": 0.5])
         let advice = GearAdvisor.suggestions(for: 0, members: GearAdvisor.members(accounts: accounts), combat: .init(takenPerSecond: 80),
                                              perMember: combats) { _ in nil }
-        // 30/s of earth with 10% protection: 30 × 0.1 / 0.9 ≈ 3.3 of the 60 the sorcerer takes.
+        // 30/s of earth taken with no protection is 30/s of raw earth: 10% of it is 3 of the 60 the sorcerer takes.
         XCTAssertEqual(advice.map { $0["text"] as? String }, ["Sorcerer · armadura: blue robe → earthborn robe (10% terra) (usado em B): " +
-                                                             "~3 de dano a menos por segundo (6% do que recebe)"])
+                                                             "~3 de dano a menos por segundo (5% do que recebe)"])
     }
 
     func testFallsBackToTheKnightBeforeHealthIsKnown() {
@@ -91,6 +91,30 @@ final class GearTests: XCTestCase {
         XCTAssertEqual(GearAdvisor.stopped(["armor": armor], shielding: 10, combat: allMagic), 0)
         let melee = GearAdvisor.Combat(takenPerSecond: 90, hitsPerSecond: 2, physicalShare: 1)
         XCTAssertEqual(GearAdvisor.stopped(["armor": armor], shielding: 10, combat: melee), 15, accuracy: 0.001)
+    }
+
+    func testProtectionGainIsAShareOfTheRawHitsNotOfWhatIsLeft() {
+        // 100/s of fire taken through 5% protection is 105.3/s of raw fire; 15% stops 10 points more of it: 10.5/s,
+        // not 100 × 0.15/0.85 − 100 × 0.05/0.95 = 12.4/s.
+        let five = GearAdvisor.Item(slot: "armor", name: "cape", stats: ["attrs.absorbpercentfire": 5])
+        let fifteen = GearAdvisor.Item(slot: "armor", name: "robe", stats: ["attrs.absorbpercentfire": 15])
+        let fire = GearAdvisor.Combat(takenPerSecond: 100, hitsPerSecond: 0, physicalShare: 0, elements: ["fire": 1])
+        XCTAssertEqual(GearAdvisor.gain(from: ["armor": five], to: ["armor": fifteen], shielding: 10, combat: fire), 100 * 0.10 / 0.95, accuracy: 1e-9)
+        // The same with physical protection on melee hits: the armor's part does not change with it.
+        let plate = GearAdvisor.Item(slot: "armor", name: "plate", stats: ["attrs.armor": 10, "attrs.absorbpercentphysical": 5])
+        let better = GearAdvisor.Item(slot: "armor", name: "plate+", stats: ["attrs.armor": 10, "attrs.absorbpercentphysical": 15])
+        let melee = GearAdvisor.Combat(takenPerSecond: 60, hitsPerSecond: 2, physicalShare: 1)
+        // Each hit: 30 taken + 7.5 armor = 37.5 after 5% protection, 39.47 raw; 15% leaves 33.55, minus 7.5 armor.
+        XCTAssertEqual(GearAdvisor.gain(from: ["armor": plate], to: ["armor": better], shielding: 10, combat: melee),
+                       2 * (37.5 / 0.95) * 0.10, accuracy: 1e-9)
+    }
+
+    func testArmorCannotTakeMoreThanTheHit() {
+        // Hits of 10: no armor stops more than the 20/s there is to stop.
+        let none = GearAdvisor.Item(slot: "armor", name: "jacket", stats: [:])
+        let huge = GearAdvisor.Item(slot: "armor", name: "fortress", stats: ["attrs.armor": 100])
+        let melee = GearAdvisor.Combat(takenPerSecond: 20, hitsPerSecond: 2, physicalShare: 1)
+        XCTAssertEqual(GearAdvisor.gain(from: ["armor": none], to: ["armor": huge], shielding: 10, combat: melee), 20, accuracy: 1e-9)
     }
 }
 

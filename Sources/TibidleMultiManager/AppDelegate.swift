@@ -3,6 +3,7 @@ import TibidleCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: MainWindowController?
+    private var dashboard: DashboardStore?
     private var server: DashboardServer?
     private var catalogLoader: HuntCatalogLoader?
     private var skillLoader: SkillDataLoader?
@@ -25,15 +26,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             checker.start()
             updateChecker = checker
         }
+        self.dashboard = dashboard
         let controller = MainWindowController(store: SettingsStore(root: root), dashboard: dashboard)
         self.controller = controller
-        let server = DashboardServer(store: dashboard)
+        DashboardRouter.appIcon = Bundle.main.url(forResource: "apple-touch-icon", withExtension: "png").flatMap { try? Data(contentsOf: $0) }
+        let server = DashboardServer(store: dashboard, localOnly: !controller.dashboardOnNetwork)
         server.onReady = { [weak controller] port in
             controller?.showDashboardAddress(DashboardServer.networkURLs(port: port) + ["http://localhost:\(port)"])
         }
         server.start()
         self.server = server
+        controller.onDashboardNetworkChange = { [weak server] network in server?.restart(localOnly: !network) }
         let notifier = Notifier(store: dashboard)
+        notifier.onOpen = { [weak controller] account in controller?.select(account) }
         notifier.start()
         self.notifier = notifier
         notifyItem?.state = notifier.enabled ? .on : .off
@@ -54,7 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func copyDashboardAddress(_ sender: Any?) {
         guard let port = server?.port else { return }
-        let address = DashboardServer.networkURLs(port: port).last ?? "http://localhost:\(port)"
+        // With network access off, only this Mac can open it.
+        let address = controller?.dashboardOnNetwork == false ? "http://localhost:\(port)"
+            : DashboardServer.networkURLs(port: port).last ?? "http://localhost:\(port)"
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(address, forType: .string)
     }
@@ -62,6 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ notification: Notification) {
         controller?.save()
+        // A hunt that ended a moment ago may still be in the store's queue: write it before quitting.
+        dashboard?.flush()
         server?.stop()
         catalogLoader?.stop()
         skillLoader?.stop()
@@ -102,9 +111,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.addItem(item("Alternar visualização", #selector(MainWindowController.nextLayout(_:)), "g", [.command, .shift]))
         view.addItem(.separator())
         view.addItem(withTitle: "Aumentar zoom", action: #selector(MainWindowController.zoomIn(_:)), keyEquivalent: "+")
+        // ⌘= is the usual zoom-in key on a keyboard where + needs Shift.
+        let zoomEquals = NSMenuItem(title: "Aumentar zoom", action: #selector(MainWindowController.zoomIn(_:)), keyEquivalent: "=")
+        zoomEquals.isHidden = true
+        zoomEquals.allowsKeyEquivalentWhenHidden = true
+        view.addItem(zoomEquals)
         view.addItem(withTitle: "Diminuir zoom", action: #selector(MainWindowController.zoomOut(_:)), keyEquivalent: "-")
         view.addItem(withTitle: "Tamanho real", action: #selector(MainWindowController.zoomReset(_:)), keyEquivalent: "0")
         view.addItem(.separator())
+        view.addItem(withTitle: "Cores em sRGB (menos trabalho para a GPU)", action: #selector(MainWindowController.toggleSRGB(_:)), keyEquivalent: "")
         view.addItem(item("Tela cheia", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]))
 
         let accounts = submenu(main, "Contas")
@@ -126,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let copy = NSMenuItem(title: "Copiar endereço para a rede local", action: #selector(copyDashboardAddress(_:)), keyEquivalent: "")
         copy.target = self
         dashboardMenu.addItem(copy)
+        dashboardMenu.addItem(withTitle: "Acessível pela rede local", action: #selector(MainWindowController.toggleDashboardNetwork(_:)), keyEquivalent: "")
         dashboardMenu.addItem(.separator())
         let notify = NSMenuItem(title: "Notificar eventos importantes", action: #selector(toggleNotifications(_:)), keyEquivalent: "")
         notify.target = self

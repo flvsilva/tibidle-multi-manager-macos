@@ -6,19 +6,28 @@ import WebKit
 final class BrowserSession: NSObject {
     static let gameURL = URL(string: "https://play.tibidle.com/")!
 
+    /// A page that keeps crashing is left alone after this many reloads in `crashWindow`.
+    static let maxCrashReloads = 3
+    static let crashWindow: TimeInterval = 600
+
     let account: Int
     let webView: WKWebView
     var onStatus: ((String) -> Void)?
+    /// The page needs the player (an alert from the game): the window shows this account first.
+    var onNeedsAttention: (() -> Void)?
     var displayName: () -> String = { "" }
     private var popups: [NSWindow] = []
+    private let dashboard: DashboardStore
+    private var crashes: [Date] = []
 
     init(account: Int, dashboard: DashboardStore) {
         self.account = account
+        self.dashboard = dashboard
         let configuration = WKWebViewConfiguration()
         configuration.userContentController.addUserScript(WKUserScript(
             source: CollectorScript.source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        configuration.userContentController.add(DashboardMessageHandler(account: account, store: dashboard),
-                                                name: CollectorScript.handlerName)
+        let handler = DashboardMessageHandler(account: account, store: dashboard)
+        configuration.userContentController.add(handler, name: CollectorScript.handlerName)
         configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: ProfileIdentity.identifiers[account])
         configuration.applicationNameForUserAgent = "Version/18.0 Safari/605.1.15"
         configuration.mediaTypesRequiringUserActionForPlayback = []
@@ -29,6 +38,8 @@ final class BrowserSession: NSObject {
         webView.allowsMagnification = true
         webView.setValue(false, forKey: "drawsBackground")
         super.init()
+        // Login popups share this configuration (WebKit requires it), script and handler included: only this page counts.
+        handler.page = webView
         webView.navigationDelegate = self
         webView.uiDelegate = self
     }
@@ -84,8 +95,18 @@ extension BrowserSession: WKNavigationDelegate {
         onStatus?("Falha de conexão (\(error.localizedDescription)) — use Recarregar")
     }
 
+    /// The page's process died (out of memory, a WebKit crash): tell the dashboard and load it again, unless it keeps dying.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        if webView === self.webView { onStatus?("Navegador interrompido — use Recarregar") }
+        guard webView === self.webView else { return }
+        dashboard.markCrashed(account: account)
+        let now = Date()
+        crashes = crashes.filter { now.timeIntervalSince($0) < Self.crashWindow } + [now]
+        guard crashes.count <= Self.maxCrashReloads else {
+            onStatus?("A página caiu \(crashes.count) vezes em 10 min — use Recarregar")
+            return
+        }
+        onStatus?("Navegador interrompido — recarregando…")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.start() }
     }
 }
 
@@ -118,13 +139,23 @@ extension BrowserSession: WKUIDelegate {
         popups.first { $0.contentView === webView }?.close()
     }
 
+    /// The game's alert/confirm/prompt as a sheet on the window of the page that asked, with its account selected first:
+    /// a modal panel would stop the whole app (the other accounts' windows, the notifier) until someone clicked.
+    private func present(_ alert: NSAlert, for webView: WKWebView, completion: @escaping (NSApplication.ModalResponse) -> Void) {
+        if webView === self.webView { onNeedsAttention?() }
+        if let window = webView.window {
+            alert.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            completion(alert.runModal())
+        }
+    }
+
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let alert = NSAlert()
         alert.messageText = displayName()
         alert.informativeText = message
-        alert.runModal()
-        completionHandler()
+        present(alert, for: webView) { _ in completionHandler() }
     }
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
@@ -134,7 +165,7 @@ extension BrowserSession: WKUIDelegate {
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancelar")
-        completionHandler(alert.runModal() == .alertFirstButtonReturn)
+        present(alert, for: webView) { completionHandler($0 == .alertFirstButtonReturn) }
     }
 
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
@@ -147,7 +178,7 @@ extension BrowserSession: WKUIDelegate {
         alert.accessoryView = field
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancelar")
-        completionHandler(alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil)
+        present(alert, for: webView) { completionHandler($0 == .alertFirstButtonReturn ? field.stringValue : nil) }
     }
 }
 
@@ -158,6 +189,7 @@ private var observationKey = 0
 private final class DashboardMessageHandler: NSObject, WKScriptMessageHandler {
     let account: Int
     let store: DashboardStore
+    weak var page: WKWebView?
 
     init(account: Int, store: DashboardStore) {
         self.account = account
@@ -165,7 +197,7 @@ private final class DashboardMessageHandler: NSObject, WKScriptMessageHandler {
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.frameInfo.isMainFrame, message.frameInfo.securityOrigin.host == BrowserSession.gameURL.host,
+        guard message.webView === page, message.frameInfo.isMainFrame, message.frameInfo.securityOrigin.host == BrowserSession.gameURL.host,
               let json = message.body as? String else { return }
         store.ingest(account: account, json: json)
     }

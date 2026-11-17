@@ -18,6 +18,11 @@ public final class SkillDataLoader {
     private var catalog = CreatureCatalog()
     private var failed: [String: Date] = [:]
     private var inFlight = Set<String>()
+    /// The spell list and the hunts list: when a download fails, the next try waits longer each time (5 min up to 6 h)
+    /// instead of every tick, and only one request per list is out at a time. Touched on `queue` only.
+    private var listInFlight = Set<String>()
+    private var listFailures: [String: Int] = [:]
+    private var listNextTry: [String: Date] = [:]
 
     public init(directory: URL, store: DashboardStore, session: URLSession? = nil) {
         spellsURL = directory.appendingPathComponent("spells-catalog.json")
@@ -66,29 +71,57 @@ public final class SkillDataLoader {
         }.resume()
     }
 
+    /// Whether a list may be downloaded now (on `queue`); marks it in flight when it may.
+    private func mayFetch(_ list: String) -> Bool {
+        guard !listInFlight.contains(list), Date() >= listNextTry[list] ?? .distantPast else { return false }
+        listInFlight.insert(list)
+        return true
+    }
+
+    /// Records how a list download went (on `queue`).
+    private func finished(_ list: String, ok: Bool) {
+        listInFlight.remove(list)
+        if ok {
+            listFailures[list] = nil
+            listNextTry[list] = nil
+        } else {
+            let failures = (listFailures[list] ?? 0) + 1
+            listFailures[list] = failures
+            listNextTry[list] = Date().addingTimeInterval(min(300 * pow(2, Double(failures - 1)), 6 * 3600))
+        }
+    }
+
     private func refreshSpellsIfStale() {
         let modified = (try? FileManager.default.attributesOfItem(atPath: spellsURL.path)[.modificationDate]) as? Date
         if let modified, Date().timeIntervalSince(modified) < Self.spellsMaxAge { return }
+        guard mayFetch("spells") else { return }
         get(SpellCatalog.url) { [weak self] data in
-            guard let self, let data, let spells = SpellCatalog(json: data) else { return }
+            guard let self else { return }
+            guard let data, let spells = SpellCatalog(json: data) else { queue.async { self.finished("spells", ok: false) }; return }
             store.setSpellCatalog(spells)
             try? FileManager.default.createDirectory(at: spellsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: spellsURL, options: .atomic)
+            queue.async { self.finished("spells", ok: true) }
         }
     }
 
     private func apply(_ hunts: HuntBestiaryCatalog) {
         store.setBestiaries(hunts)
         for (name, map) in hunts.creatures.resistance where !catalog.knows(name) { catalog.resistance[name] = map }
+        // The maps' monster lists are the only source of health, which weighs each monster's share of the damage.
+        for (name, health) in hunts.creatures.health { catalog.health[name] = health }
         store.setCreatures(catalog)
     }
 
     private func refreshSelectIfStale() {
         let modified = (try? FileManager.default.attributesOfItem(atPath: selectURL.path)[.modificationDate]) as? Date
         if let modified, Date().timeIntervalSince(modified) < Self.spellsMaxAge { return }
+        guard mayFetch("select") else { return }
         get(HuntBestiaryCatalog.url, limit: Self.selectMaxBytes) { [weak self] data in
-            guard let self, let data, let hunts = HuntBestiaryCatalog(json: data) else { return }
+            guard let self else { return }
+            guard let data, let hunts = HuntBestiaryCatalog(json: data) else { queue.async { self.finished("select", ok: false) }; return }
             self.queue.async {
+                self.finished("select", ok: true)
                 self.apply(hunts)
                 try? FileManager.default.createDirectory(at: self.selectURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? data.write(to: self.selectURL, options: .atomic)

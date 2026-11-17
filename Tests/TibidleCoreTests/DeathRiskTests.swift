@@ -60,9 +60,74 @@ final class DeathRiskTests: XCTestCase {
     }
 
     func testTheMapHistoryOutweighsAFewMinutes() {
-        // 400 hours with one death keep a noisy 20%/h near the map's rate; a map never hunted follows the live rate.
+        // 400 hours with one death keep a noisy 20%/h near the map's rate; a map never hunted follows the live rate:
+        // 10 h of it against 2 h of the overall rate.
         XCTAssertLessThan(DeathRisk.combined(live: 0.2, deaths: 1, hours: 400, overallRate: 0.01), 0.01)
-        XCTAssertEqual(DeathRisk.combined(live: 0.2, deaths: 0, hours: 0, overallRate: 0.01), (0.1 + 2) / 20, accuracy: 1e-9)
+        XCTAssertEqual(DeathRisk.combined(live: 0.2, deaths: 0, hours: 0, overallRate: 0.01), (2 * 0.01 + 0.2 * 10) / 12, accuracy: 1e-9)
+        // The more the live rate has been measured, the more it weighs.
+        XCTAssertGreaterThan(DeathRisk.combined(live: 0.2, deaths: 1, hours: 400, overallRate: 0.01, liveHours: 30),
+                             DeathRisk.combined(live: 0.2, deaths: 1, hours: 400, overallRate: 0.01))
+    }
+
+    func testASustainedRateIsNotBuriedUnderAQuietMap() {
+        // 50 minutes of big hits on the druid, the estimate accrued as the store does it, about once a minute.
+        var risk = DeathRisk()
+        for i in 0..<1000 {
+            let date = start.addingTimeInterval(Double(i) * 3)
+            let hp = i % 2 == 0 ? 800.0 : (i % 25 == 1 ? 800 - Double(500 + (i * 7) % 200) : 720)
+            risk.add(party: [["name": "D", "vocation": "DRUID", "hp": hp, "maxHp": 800]], at: date)
+            risk.accrue(now: date)
+        }
+        let now = start.addingTimeInterval(3000)
+        let live = risk.estimate(now: now)!["rate"] as! Double
+        XCTAssertGreaterThan(1 - exp(-live), DeathRisk.warnPerHour)
+        XCTAssertNotNil(risk.highSince)
+        let quiet = DeathRisk.combined(live: live, deaths: 1, hours: 400, overallRate: 0.01)
+        XCTAssertLessThan(quiet, live / 3)
+        XCTAssertEqual(risk.combined(live: live, deaths: 1, hours: 400, overallRate: 0.01, now: now), live / 3, accuracy: 1e-9)
+        // A hunt that just started gets no floor.
+        XCTAssertEqual(DeathRisk().combined(live: live, deaths: 1, hours: 400, overallRate: 0.01, now: now), quiet, accuracy: 1e-12)
+    }
+
+    func testTheTailKeepsTenExcessesAndTiesAtTheThreshold() {
+        // 95 losses of 50 and 5 of 80: the old 90% threshold (50) left 5 excesses; now the top 10, five of them ties.
+        let weighed = (Array(repeating: 50.0, count: 95) + Array(repeating: 80.0, count: 5)).map { (loss: $0, weight: 1.0) }
+        let excess = DeathRisk.excess(weighed)!
+        XCTAssertEqual(excess.count, 10)
+        XCTAssertEqual(excess.threshold, 50)
+        XCTAssertEqual(excess.mean, 15, accuracy: 1e-9)
+        // Fewer windows than that: all of them, over zero.
+        XCTAssertEqual(DeathRisk.excess([(loss: 10, weight: 1), (loss: 30, weight: 1)])!.mean, 20, accuracy: 1e-9)
+        // Nothing lost: no tail.
+        XCTAssertNil(DeathRisk.excess(Array(repeating: (loss: 0.0, weight: 1.0), count: 50)))
+    }
+
+    func testMembersChangingPlacesAreNotLosses() {
+        // The game lists the knight (2000) and the druid (800) in a different order every frame, health unchanged:
+        // by position that would read as 1200 lost every 3 s.
+        var risk = DeathRisk()
+        let knight: [String: Any] = ["name": "Z", "vocation": "Elite Knight", "hp": 2000, "maxHp": 2000]
+        let druid: [String: Any] = ["name": "Z", "vocation": "Elder Druid", "hp": 800, "maxHp": 800]
+        for i in 0..<400 { risk.add(party: i % 2 == 0 ? [knight, druid] : [druid, knight], at: start.addingTimeInterval(Double(i) * 3)) }
+        XCTAssertNil(risk.estimate(now: start.addingTimeInterval(1200)), "no health was lost")
+    }
+
+    func testPausesDoNotStretchTheHour() {
+        // The same hits after a 5-minute pause (early, so every window keeps its age and weight): the pause is no
+        // window and does not dilute the rate (timed over the whole span, it read 30% lower).
+        func feed(pauseAt: Int?) -> Double {
+            var risk = DeathRisk()
+            var time = 0.0
+            for i in 0..<250 {
+                if i == pauseAt { time += 300 }
+                let hp = i % 2 == 0 ? 800.0 : (i % 25 == 13 ? 800 - Double(500 + (i * 7) % 200) : 720)
+                risk.add(party: [["name": "D", "vocation": "DRUID", "hp": hp, "maxHp": 800]], at: start.addingTimeInterval(time))
+                time += 3
+            }
+            return risk.estimate(now: start.addingTimeInterval(time))!["rate"] as! Double
+        }
+        let steady = feed(pauseAt: nil), paused = feed(pauseAt: 2)
+        XCTAssertEqual(paused / steady, 1, accuracy: 0.02)
     }
 
     func testGapsAreNotWindows() {

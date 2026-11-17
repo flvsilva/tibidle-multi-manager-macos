@@ -5,16 +5,40 @@ public let accountCount = 4
 public struct AccountSettings: Codable, Equatable {
     public var name: String
     public var muted: Bool
+    /// Page zoom per pane size (`PaneSize.rawValue`): a small pane of the 1 + 3 view needs less than the same account alone.
+    public var zoom: [String: Double]
 
-    public init(name: String, muted: Bool = false) {
+    public init(name: String, muted: Bool = false, zoom: [String: Double] = [:]) {
         self.name = name
         self.muted = muted
+        self.zoom = zoom
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? ""
         muted = (try? c.decodeIfPresent(Bool.self, forKey: .muted)) ?? false
+        zoom = (try? c.decodeIfPresent([String: Double].self, forKey: .zoom)) ?? [:]
+    }
+
+    public static let zoomRange: ClosedRange<Double> = 0.3...3
+
+    public func zoom(for size: PaneSize) -> Double { zoom[size.rawValue] ?? 1 }
+}
+
+/// How big an account's pane is in the current view; each keeps its own zoom.
+public enum PaneSize: String, CaseIterable {
+    case full      // Tela normal
+    case main      // the large pane of 1 + 3
+    case side      // the small panes of 1 + 3
+    case quarter   // 4 telas
+
+    public static func of(position: Int, in layout: ViewLayout) -> PaneSize {
+        switch layout {
+        case .single: return .full
+        case .featured: return position == 0 ? .main : .side
+        case .grid: return .quarter
+        }
     }
 }
 
@@ -33,12 +57,18 @@ public struct AppSettings: Codable, Equatable {
     public var selectedTab: Int
     public var layout: ViewLayout
     public var tabOrder: [Int]
+    /// Pages drawn in sRGB instead of the display's color profile (less color conversion for the GPU on some monitors).
+    public var srgbColors: Bool
+    /// Other devices on the network can open the dashboard; off, only this Mac can.
+    public var dashboardOnNetwork: Bool
 
     public init() {
         accounts = []
         selectedTab = 0
         layout = .single
         tabOrder = Array(0..<accountCount)
+        srgbColors = false
+        dashboardOnNetwork = true
     }
 
     /// Settings saved before `layout` existed only had the grid on or off.
@@ -55,6 +85,8 @@ public struct AppSettings: Codable, Equatable {
             layout = (try? legacy?.decodeIfPresent(Bool.self, forKey: .gridView)) == true ? .grid : .single
         }
         tabOrder = (try? c.decodeIfPresent([Int].self, forKey: .tabOrder)) ?? []
+        srgbColors = (try? c.decodeIfPresent(Bool.self, forKey: .srgbColors)) ?? false
+        dashboardOnNetwork = (try? c.decodeIfPresent(Bool.self, forKey: .dashboardOnNetwork)) ?? true
     }
 
     /// Fills missing accounts, trims names and repairs the tab order and selection.
@@ -63,6 +95,8 @@ public struct AppSettings: Codable, Equatable {
             var account = i < accounts.count ? accounts[i] : AccountSettings(name: "")
             let trimmed = account.name.trimmingCharacters(in: .whitespacesAndNewlines)
             account.name = trimmed.isEmpty ? "Conta \(i + 1)" : String(trimmed.prefix(Self.maxNameLength))
+            account.zoom = account.zoom.filter { PaneSize(rawValue: $0.key) != nil && $0.value.isFinite }
+                .mapValues { min(max($0, AccountSettings.zoomRange.lowerBound), AccountSettings.zoomRange.upperBound) }
             return account
         }
         selectedTab = min(max(selectedTab, 0), accountCount - 1)

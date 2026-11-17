@@ -101,7 +101,7 @@ window.orderFrontRegardless()
 server.onReady = { port in
     webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)/")!))
     DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-        if modal && !presets { webView.evaluateJavaScript("document.querySelector('.skills-btn').click()", completionHandler: nil) }
+        if modal && !presets { webView.evaluateJavaScript("document.querySelector('.tools button[data-key=\\'skills\\']').click()", completionHandler: nil) }
         if presets {
             webView.evaluateJavaScript("document.getElementById('presets-open').click()", completionHandler: nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {

@@ -17,13 +17,23 @@ public struct HTTPResponse {
         [200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 413: "Payload Too Large"][status] ?? "OK"
     }
 
-    /// Full HTTP/1.1 response; every response closes the connection.
-    public func serialized() -> Data {
+    /// Text bodies worth compressing; images are already compressed.
+    private var compressible: Bool {
+        body.count >= 1024 && (contentType.hasPrefix("text/") || contentType.hasPrefix("application/json") || contentType.hasPrefix("application/manifest"))
+    }
+
+    /// Full HTTP/1.1 response; every response closes the connection. With `gzip` (the client accepts it) a text body
+    /// goes compressed; without `includeBody` (HEAD) only the head goes, with the length the body would have.
+    public func serialized(gzip: Bool = false, includeBody: Bool = true) -> Data {
+        let packed = gzip && compressible ? Gzip.compress(body) : nil
+        let payload = packed ?? body
         var head = "HTTP/1.1 \(status) \(reason)\r\n"
-        head += "Content-Type: \(contentType)\r\nContent-Length: \(body.count)\r\n"
+        head += "Content-Type: \(contentType)\r\nContent-Length: \(payload.count)\r\n"
+        if packed != nil { head += "Content-Encoding: gzip\r\n" }
+        if compressible { head += "Vary: Accept-Encoding\r\n" }
         if let filename { head += "Content-Disposition: attachment; filename=\"\(filename)\"\r\n" }
         head += "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n"
-        return Data(head.utf8) + body
+        return includeBody ? Data(head.utf8) + payload : Data(head.utf8)
     }
 }
 
@@ -46,6 +56,20 @@ public struct HTTPRequest {
 
 public enum DashboardRouter {
     public static let maxBody = 32 * 1024
+    /// The app icon for "Adicionar à Tela de Início" (180 × 180 PNG from the app bundle); set once before the server starts.
+    public static var appIcon: Data?
+
+    /// Names this server can be reached by. A site on another domain that rebinds its DNS to this Mac still sends its
+    /// own name as Host, so refusing other names keeps it from reading the dashboard (DNS rebinding).
+    static func isAllowedHost(_ header: String?) -> Bool {
+        let host = (header ?? "").lowercased().trimmingCharacters(in: .whitespaces)
+        guard !host.isEmpty else { return true }
+        if host.hasPrefix("[") { return true }   // IPv6 literal
+        let name = String(host.split(separator: ":").first ?? "")
+        if name == "localhost" || !name.contains(".") { return true }
+        if name.split(separator: ".").count == 4, name.split(separator: ".").allSatisfy({ UInt8($0) != nil }) { return true }
+        return [".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain", ".ts.net"].contains { name.hasSuffix($0) }
+    }
 
     public static func respond(method: String, target: String, store: DashboardStore) -> HTTPResponse {
         respond(HTTPRequest(method: method, target: target), store: store)
@@ -55,6 +79,7 @@ public enum DashboardRouter {
         let method = request.method, target = request.target
         if method == "POST" { return post(request, store: store) }
         guard method == "GET" || method == "HEAD" else { return text(405, "Método não permitido") }
+        guard isAllowedHost(request.headers["host"]) else { return text(403, "Abra o dashboard pelo endereço do Mac na rede local.") }
         guard let components = URLComponents(string: target) else { return text(400, "Requisição inválida") }
         let query = Dictionary((components.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
         switch components.path {
@@ -67,7 +92,18 @@ public enum DashboardRouter {
             return jsonResponse(store.historyJSON(hours: hours))
         case "/api/hunts":
             let limit = min(max(Int(query["limit"] ?? "") ?? 50, 1), 500)
-            return jsonResponse(store.huntsJSON(limit: limit))
+            let filter = DashboardStore.HuntFilter(account: Int(query["account"] ?? ""), huntId: Int(query["huntId"] ?? ""),
+                                                   minMinutes: Double(query["minMinutes"] ?? ""))
+            return jsonResponse(store.huntsJSON(limit: limit, offset: max(Int(query["offset"] ?? "") ?? 0, 0), filter: filter,
+                                                lean: query["lean"] == "1"))
+        case "/api/hunt":
+            guard let id = Int(query["id"] ?? ""), let hunt = store.huntJSON(id: id) else { return text(404, "Hunt não encontrada") }
+            return jsonResponse(hunt)
+        case "/manifest.webmanifest":
+            return HTTPResponse(status: 200, contentType: "application/manifest+json; charset=utf-8", body: manifest)
+        case "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png":
+            guard let icon = appIcon else { return text(404, "Não encontrado") }
+            return HTTPResponse(status: 200, contentType: "image/png", body: icon)
         case "/api/ranking":
             return jsonResponse(store.rankingJSON())
         case "/api/daily":
@@ -141,6 +177,13 @@ public enum DashboardRouter {
             return text(404, "Não encontrado")
         }
     }
+
+    /// Lets the phone keep the dashboard on its home screen, opening full screen like an app.
+    static let manifest = Data(#"""
+        {"name":"Tibidle Hunts","short_name":"Tibidle","start_url":"/","scope":"/","display":"standalone",
+         "background_color":"#0f1116","theme_color":"#14171e","lang":"pt-BR",
+         "icons":[{"src":"/apple-touch-icon.png","sizes":"180x180","type":"image/png"}]}
+        """#.utf8)
 
     private static func jsonResponse(_ data: Data) -> HTTPResponse {
         HTTPResponse(status: 200, contentType: "application/json; charset=utf-8", body: data)

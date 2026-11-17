@@ -10,10 +10,15 @@ public enum HuntInsights {
     /// The hunt in progress needs this long before its rates are compared.
     static let minElapsedMs = 30.0 * 60_000
     static let dropWarning = 0.2
+    /// Hunts of the same setup needed before that setup sets the bar (and before a drop is blamed on leaving it).
+    static let minRuns = 2
 
     struct Run {
         let id: Int
         let summary: [String: Any]
+        /// The median profit per hour of the setup this run stands for, and how many hunts that took (`reference`).
+        var baseline: Double? = nil
+        var runs = 1
         var endedAt: Double { number(summary["endedAt"]) ?? 0 }
         var hours: Double { (number(summary["elapsedSec"]) ?? 0) / 3600 }
         var profitPerHour: Double { (number(summary["balance"]) ?? 0) / hours }
@@ -24,12 +29,44 @@ public enum HuntInsights {
         var setup: [String: [String: Any]]? { (summary["setup"] as? [String: Any])?.compactMapValues { $0 as? [String: Any] } }
     }
 
-    /// The account's most profitable recent hunt on this map, near this level, that kept its battle setup.
+    /// What the account usually makes here with its best setup. Profit per hour swings about 25% between hunts with
+    /// nothing changed, so the single best hunt is a lucky one and a normal hunt reads as a drop: the comparable
+    /// hunts (same map, near the level, recent, long enough, setup kept) are grouped by battle setup, each group
+    /// valued by its median, and the best group with `minRuns` hunts or more wins, its hunt closest to the median
+    /// standing for it. Without such a group, the median of all of them (no setup is then to blame).
     static func reference(runs: [Run], huntId: Int, level: Double, now: Double) -> Run? {
-        runs.filter { run in
+        let pool = runs.filter { run in
             number(run.summary["huntId"]).map { Int($0) } == huntId && run.hours * 3600 >= minSeconds && run.setup != nil
                 && now - run.endedAt <= window && run.levelMid.map { abs($0 - level) <= levelRange } == true
-        }.max { $0.profitPerHour < $1.profitPerHour }
+        }.sorted { $0.endedAt > $1.endedAt }
+        guard !pool.isEmpty else { return nil }
+        var groups: [[Run]] = []
+        for run in pool {
+            if let index = groups.firstIndex(where: { sameSetup($0[0], run) }) { groups[index].append(run) } else { groups.append([run]) }
+        }
+        let ranked = groups.filter { $0.count >= minRuns }.map { ($0, median($0.map(\.profitPerHour))) }
+        let (members, baseline) = ranked.max { $0.1 < $1.1 } ?? (pool, median(pool.map(\.profitPerHour)))
+        // Closest to the median; the most recent of a tie (the pool is newest first).
+        var reference = members.enumerated().min {
+            (abs($0.element.profitPerHour - baseline), $0.offset) < (abs($1.element.profitPerHour - baseline), $1.offset)
+        }!.element
+        reference.baseline = baseline
+        reference.runs = ranked.isEmpty ? 1 : members.count
+        return reference
+    }
+
+    static func sameSetup(_ a: Run, _ b: Run) -> Bool {
+        guard let x = a.setup, let y = b.setup, Set(x.keys) == Set(y.keys) else { return false }
+        return x.allSatisfy { vocation, config in
+            BattlePreset(vocation: vocation, huntId: nil, huntTitle: "", config: config).differences(from: y[vocation] ?? [:]).isEmpty
+        }
+    }
+
+    static func median(_ values: [Double]) -> Double {
+        let sorted = values.sorted()
+        guard !sorted.isEmpty else { return 0 }
+        let mid = sorted.count / 2
+        return sorted.count % 2 == 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
     }
 
     /// - Parameters:
@@ -39,8 +76,11 @@ public enum HuntInsights {
         var out: [String: Any] = [:]
         let range = reference.summary["level"] as? [String: Any]
         let low = Int(number(range?["start"]) ?? 0), high = Int(number(range?["end"]) ?? 0)
+        let baseline = reference.baseline ?? reference.profitPerHour
+        // `profitPerHour` is what the setup usually makes (the median of `runs` hunts); the other fields are its hunt's.
         var summary: [String: Any] = ["id": reference.id, "endedAt": reference.endedAt, "hours": (reference.hours * 10).rounded() / 10,
-                                      "profitPerHour": Int(reference.profitPerHour.rounded()), "levels": low == high ? "\(low)" : "\(low)–\(high)"]
+                                      "profitPerHour": Int(baseline.rounded()), "runs": reference.runs,
+                                      "levels": low == high ? "\(low)" : "\(low)–\(high)"]
         summary["takenPerKill"] = takenPerKill(reference.summary)
         out["reference"] = summary
         let before = reference.setup ?? [:]
@@ -53,7 +93,7 @@ public enum HuntInsights {
             let profit = ((number(analyzer["lootGold"]) ?? 0) - (number(analyzer["suppliesGold"]) ?? 0)) / (elapsed / 3_600_000)
             out["profitPerHour"] = Int(profit.rounded())
             out["takenPerKill"] = takenPerKill(analyzer)
-            if reference.profitPerHour > 0 { out["drop"] = (reference.profitPerHour - profit) / reference.profitPerHour }
+            if baseline > 0 { out["drop"] = (baseline - profit) / baseline }
             out["members"] = members(party: party, hours: elapsed / 3_600_000, reference: reference, setup: setup)
         }
         return out

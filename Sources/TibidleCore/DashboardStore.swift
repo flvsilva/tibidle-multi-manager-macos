@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SQLite3
 
 /// Live hunt state per account plus a local history (SQLite) for the dashboard.
@@ -8,7 +9,16 @@ public final class DashboardStore {
     public static let sampleInterval: TimeInterval = 60
     public static let retention: TimeInterval = 30 * 24 * 3600
     public static let maxMessageBytes = 256 * 1024
+    /// A hunting account with no data from the game for this long is shown as "sem dados" (frozen or broken page).
+    public static let staleAfter: TimeInterval = 90
+    /// Per-hour rates of the first minutes of a hunt are mostly noise (one drop over two minutes reads as millions/h).
+    static let minRateMs = 5 * 60_000.0
+    /// The history chart's resolution above 24 h: about this many points per account.
+    static let maxHistoryPoints = 600.0
+    /// How long a skill analysis is reused while the party and the mix of monsters stay the same.
+    static let skillReuse: TimeInterval = 30
 
+    private static let logger = Logger(subsystem: "io.github.flvsilva.tibidle-multi-manager", category: "store")
     private let queue = DispatchQueue(label: "TibidleMultiManager.DashboardStore")
     private let now: () -> Date
     private var db: OpaquePointer?
@@ -24,8 +34,17 @@ public final class DashboardStore {
     /// Modeled damage accumulated during the current hunt, per assumed crowd size, plus the seconds covered.
     private var modeled: [Int: (damage: [Int: Double], seconds: Double, valid: Bool, last: Date?)] = [:]
     static let crowdSizes = [1, 2, 3, 4, 6, 8]
-    /// Finished hunts, newest first, parsed once and dropped whenever a hunt is recorded.
+    /// Finished hunts, newest first, parsed once (without the gear and the measured hits, which the analyses don't read);
+    /// a new hunt is put in front.
     var runCache: [(account: Int, endedAt: Double, summary: [String: Any], id: Int)]?
+    /// The newest run's row id: the page fetches the hunt lists again only when it changes.
+    private var runsVersion = 0
+    /// Results derived from the finished hunts (benchmarks, the map's deaths, references), kept until a hunt is recorded.
+    private var memo: [String: Any] = [:]
+    private var memoVersion = -1
+    private var memoSince = Date.distantPast
+    private var skillCache: [Int: (at: Date, key: String, value: [String: Any]?)] = [:]
+    private var lastPrune = Date.distantPast
     /// Average mana and health per party member during the current hunt (reset when a hunt starts or resumes).
     private var vitals: [Int: VitalsTracker] = [:]
     private var hits: [Int: HitsTracker] = [:]
@@ -48,12 +67,14 @@ public final class DashboardStore {
         }
         exec("""
             PRAGMA journal_mode=WAL;
+            PRAGMA synchronous=NORMAL;
             CREATE TABLE IF NOT EXISTS samples (account INTEGER, ts REAL, hunt_id INTEGER, elapsed_ms INTEGER,
                 xp TEXT, xp_per_hour INTEGER, loot_gold INTEGER, supplies_gold INTEGER, kills_total INTEGER);
             CREATE INDEX IF NOT EXISTS samples_ts ON samples(ts);
             -- hunt_id is the *map* id, so a run is identified by its own numbers, not by the map.
             CREATE TABLE IF NOT EXISTS runs (account INTEGER, ended_at REAL, signature TEXT, summary TEXT,
                 UNIQUE(account, signature));
+            CREATE INDEX IF NOT EXISTS runs_ended ON runs(ended_at);
             -- Modeled vs real damage per hunt, used to calibrate the skill advisor.
             CREATE TABLE IF NOT EXISTS presets (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, vocation TEXT, hunt_id INTEGER,
                 hunt_title TEXT, text TEXT, created_at REAL);
@@ -65,10 +86,17 @@ public final class DashboardStore {
         query("SELECT 1 FROM pragma_table_info('calibration') WHERE name = 'model'", []) { _ in versioned = true }
         if !versioned { exec("ALTER TABLE calibration ADD COLUMN model INTEGER DEFAULT 1") }
         reloadCalibration()
+        query("SELECT MAX(rowid) FROM runs", []) { row in self.runsVersion = Int(sqlite3_column_int64(row, 0)) }
         query("SELECT mute, hunt FROM muted", []) { row in
             if let text = sqlite3_column_text(row, 0) { self.mutes[String(cString: text)] = sqlite3_column_double(row, 1) }
         }
-        run("DELETE FROM samples WHERE ts < ?", [.double(self.now().timeIntervalSince1970 - Self.retention)])
+        pruneSamples()
+    }
+
+    /// Drops samples past the retention; runs at launch and then once a day, for an app left open for weeks.
+    private func pruneSamples() {
+        lastPrune = now()
+        run("DELETE FROM samples WHERE ts < ?", [.double(now().timeIntervalSince1970 - Self.retention)])
     }
 
     deinit { sqlite3_close(db) }
@@ -85,9 +113,9 @@ public final class DashboardStore {
             """)
     }
 
-    public func setSpellCatalog(_ spells: SpellCatalog) { queue.sync { self.spells = spells } }
+    public func setSpellCatalog(_ spells: SpellCatalog) { queue.sync { self.spells = spells; skillCache = [:] } }
     public func setBestiaries(_ catalog: HuntBestiaryCatalog) { queue.sync { bestiaries = catalog } }
-    public func setCreatures(_ creatures: CreatureCatalog) { queue.sync { self.creatures = creatures } }
+    public func setCreatures(_ creatures: CreatureCatalog) { queue.sync { self.creatures = creatures; skillCache = [:] } }
 
     /// Monsters killed on screen whose resistances are still unknown (the loader fetches them).
     public func missingCreatures() -> [String] {
@@ -103,7 +131,7 @@ public final class DashboardStore {
     }
 
     public func setHuntCatalog(_ catalog: HuntCatalog) {
-        queue.sync { self.catalog = catalog }
+        queue.sync { self.catalog = catalog; memo = [:] }
     }
 
     /// A newer release than the running app (nil when up to date), shown in the dashboard header.
@@ -112,21 +140,53 @@ public final class DashboardStore {
     }
 
     public func setAccountNames(_ names: [String]) {
-        queue.sync { self.names = names }
+        queue.sync { self.names = names; memo = [:] }
+    }
+
+    /// Each account's status as the dashboard shows it ("hunting", "city", "stale", …), handed to `completion` on the main
+    /// thread: the window's status dots never wait for the store.
+    public func statuses(_ completion: @escaping ([String]) -> Void) {
+        queue.async { [self] in
+            let nowMs = now().timeIntervalSince1970 * 1000
+            let list = live.map { entry -> String in
+                let status = entry["status"] as? String ?? "offline"
+                if status == "hunting", let updated = number(entry["updatedAt"]), nowMs - updated > Self.staleAfter * 1000 { return "stale" }
+                return status
+            }
+            DispatchQueue.main.async { completion(list) }
+        }
+    }
+
+    /// The game page of an account died (WebKit's content process); the app reloads it.
+    public func markCrashed(account: Int) {
+        guard (0..<accountCount).contains(account) else { return }
+        queue.async { [self] in
+            var entry = live[account]
+            entry["status"] = "crashed"
+            entry["statusSince"] = now().timeIntervalSince1970 * 1000
+            live[account] = entry
+        }
     }
 
     // MARK: Ingest
 
+    /// Called on the main thread for every message from the game: it only queues the work, so a dashboard request being
+    /// built never freezes the window. The queue is serial, so messages apply in order and reads see every earlier one.
     public func ingest(account: Int, json: String) {
-        guard (0..<accountCount).contains(account), json.utf8.count <= Self.maxMessageBytes,
-              let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
-              let type = object["type"] as? String else { return }
-        let data = object["data"] as? [String: Any] ?? [:]
-        queue.sync { apply(account: account, type: type, data: data) }
+        guard (0..<accountCount).contains(account), json.utf8.count <= Self.maxMessageBytes else { return }
+        // Stamped on arrival, not when the queue gets to it.
+        let date = now()
+        queue.async { [self] in
+            guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+                  let type = object["type"] as? String else { return }
+            apply(account: account, type: type, data: object["data"] as? [String: Any] ?? [:], at: date)
+        }
     }
 
-    private func apply(account: Int, type: String, data: [String: Any]) {
-        let date = now()
+    /// Waits for the messages already queued: called when the app quits, so a hunt that just ended is written.
+    public func flush() { queue.sync {} }
+
+    private func apply(account: Int, type: String, data: [String: Any], at date: Date) {
         var entry = live[account]
         switch type {
         case "welcome":
@@ -147,7 +207,8 @@ public final class DashboardStore {
         case "hunt_started":
             entry["status"] = "hunting"
             entry["huntId"] = data["huntId"]
-            entry["state"] = data["state"]
+            entry["trackedHuntId"] = data["huntId"]
+            entry["state"] = data["state"].map { Self.keepingGear($0, previous: entry["state"]) }
             entry["training"] = data["training"]
             entry["analyzer"] = nil
             entry["offline"] = nil
@@ -166,7 +227,19 @@ public final class DashboardStore {
                 entry["huntBestiary"] = counters
                 entry["bestiarySnap"] = number((data["analyzer"] as? [String: Any])?["killsTotal"]) ?? 0
             }
-            if type == "resume" { modeled[account] = nil; vitals[account] = VitalsTracker(); hits[account] = HitsTracker(); risk[account] = DeathRisk(); dangers[account] = DangerTracker() }
+            // A reconnect (the Mac waking up, the network dropping) resumes the same hunt: keep what was measured so far,
+            // and its start, which "ignorar nesta hunt" is tied to. Only another hunt starts the trackers over.
+            var sameHunt = false
+            if type == "resume" {
+                let elapsed = number((data["analyzer"] as? [String: Any])?["elapsedMs"])
+                if let elapsed, let started = number(entry["huntStartedAt"]), data["huntId"] != nil,
+                   number(entry["trackedHuntId"]) == number(data["huntId"]), risk[account] != nil {
+                    sameHunt = abs(date.timeIntervalSince1970 * 1000 - elapsed - started) < 120_000
+                }
+                modeled[account] = nil
+                if !sameHunt { vitals[account] = VitalsTracker(); hits[account] = HitsTracker(); risk[account] = DeathRisk(); dangers[account] = DangerTracker() }
+                entry["trackedHuntId"] = data["huntId"]
+            }
             if let tally = data["hits"] as? [String: Any] { hits[account, default: HitsTracker()].add(tally, at: date) }
             if type == "frame", let party = (data["state"] as? [String: Any])?["party"] as? [[String: Any]] {
                 risk[account, default: DeathRisk()].add(party: party, at: date)
@@ -180,7 +253,7 @@ public final class DashboardStore {
             }
             entry["status"] = "hunting"
             if let huntId = data["huntId"] { entry["huntId"] = huntId }
-            if let state = data["state"] { entry["state"] = state }
+            if let state = data["state"] { entry["state"] = Self.keepingGear(state, previous: entry["state"]) }
             if let training = data["training"] { entry["training"] = training }
             if let offline = data["offline"] { entry["offline"] = offline }
             if let progress = (data["eventosProgresso"] as? [String: Any])?["dia"] as? [String: Any] {
@@ -196,7 +269,7 @@ public final class DashboardStore {
             }
             if let analyzer = data["analyzer"] as? [String: Any] {
                 entry["analyzer"] = analyzer
-                if type == "resume" || entry["huntStartedAt"] == nil, let elapsed = number(analyzer["elapsedMs"]) {
+                if (type == "resume" && !sameHunt) || entry["huntStartedAt"] == nil, let elapsed = number(analyzer["elapsedMs"]) {
                     entry["huntStartedAt"] = date.timeIntervalSince1970 * 1000 - elapsed
                 }
                 sample(account: account, huntId: entry["huntId"], analyzer: analyzer, at: date)
@@ -226,9 +299,13 @@ public final class DashboardStore {
                 }
             }
             if let measured = hits[account]?.summary() { summary["hits"] = measured }
-            // What the death risk expected over the hunt, to check it against the deaths seen.
-            if let tracker = risk[account], tracker.covered >= 600 {
-                summary["deathRisk"] = ["expected": tracker.expected, "hours": tracker.covered / 3600, "model": DeathRisk.model]
+            // What the death risk expected over the whole hunt, to check it against the deaths seen. The minutes the live
+            // estimate did not cover (the start, a hunt that ended by death early) count at the map's historical rate: leaving
+            // those hunts out hid most early deaths and made the calibration think the risk was too high.
+            if let tracker = risk[account], let seconds = number(summary["elapsedSec"]), seconds > 0 {
+                let uncovered = max(0, seconds - tracker.covered) / 3600
+                let history = deathHistory(entry).rate
+                summary["deathRisk"] = ["expected": tracker.expected + history * uncovered, "hours": seconds / 3600, "model": DeathRisk.model]
             }
             risk[account] = nil
             if let moments = dangers[account]?.summary() { summary["dangers"] = moments }
@@ -261,7 +338,12 @@ public final class DashboardStore {
                     .map { "\(summary[$0] ?? "")" }.joined(separator: "|")
                 run("INSERT OR IGNORE INTO runs (account, ended_at, signature, summary) VALUES (?, ?, ?, ?)",
                     [.int(account), .double(date.timeIntervalSince1970), .text(signature), .text(text)])
-                runCache = nil
+                if sqlite3_changes(db) == 1 {
+                    let id = Int(sqlite3_last_insert_rowid(db))
+                    runCache?.insert((account, date.timeIntervalSince1970, Self.cacheable(summary), id), at: 0)
+                    runsVersion = max(runsVersion, id)
+                    memo = [:]
+                }
             }
         case "session_takeover", "session_replaced":
             entry["status"] = "replaced"
@@ -286,6 +368,7 @@ public final class DashboardStore {
     private func sample(account: Int, huntId: Any?, analyzer: [String: Any], at date: Date) {
         if let last = lastSample[account], date.timeIntervalSince(last) < Self.sampleInterval { return }
         lastSample[account] = date
+        if date.timeIntervalSince(lastPrune) > 86400 { pruneSamples() }
         accumulateModel(account: account, analyzer: analyzer, at: date)
         run("""
             INSERT INTO samples (account, ts, hunt_id, elapsed_ms, xp, xp_per_hour, loot_gold, supplies_gold, kills_total)
@@ -306,24 +389,49 @@ public final class DashboardStore {
     // MARK: Queries (JSON for the dashboard API)
 
     public func stateJSON() -> Data {
-        queue.sync {
+        // Built on the store's queue, encoded after leaving it: the encoding of the largest payload holds nothing up.
+        let state: [String: Any] = queue.sync {
             let accounts = buildAccounts()
             let nowMs = now().timeIntervalSince1970 * 1000
-            let items = Attention.evaluate(accounts: accounts, now: nowMs)
-            var state: [String: Any] = ["generatedAt": nowMs, "accounts": accounts,
+            let items = evaluate(accounts, now: nowMs)
+            var state: [String: Any] = ["generatedAt": nowMs, "accounts": accounts, "runsVersion": runsVersion,
                                         "attention": items.filter { !muted($0, accounts) }.map(\.json),
                                         "muted": items.filter { muted($0, accounts) }.map { $0.json.merging(["always": mutes[$0.mute ?? ""] == 0]) { a, _ in a } }]
             if let update { state["update"] = update }
-            return json(state)
+            return state
         }
+        return json(state)
     }
 
     /// Current attention items (used by the macOS notifier), without the ignored ones.
     public func attention() -> [AttentionItem] {
         queue.sync {
             let accounts = buildAccounts()
-            return Attention.evaluate(accounts: accounts, now: now().timeIntervalSince1970 * 1000).filter { !muted($0, accounts) }
+            return evaluate(accounts, now: now().timeIntervalSince1970 * 1000).filter { !muted($0, accounts) }
         }
+    }
+
+    /// The advisors' items plus what only the app knows: a page that stopped sending data or crashed.
+    private func evaluate(_ accounts: [[String: Any]], now nowMs: Double) -> [AttentionItem] {
+        var items = Attention.evaluate(accounts: accounts, now: nowMs)
+        for account in accounts {
+            guard let index = account["index"] as? Int else { continue }
+            let label = account["label"] as? String ?? "Conta \(index + 1)"
+            switch account["status"] as? String {
+            case "stale":
+                let minutes = Int(((nowMs - (number(account["updatedAt"]) ?? nowMs)) / 60_000).rounded(.down))
+                let long = minutes >= 5
+                items.append(AttentionItem(key: "stale|\(index)|\(long ? "bad" : "warn")", account: index, kind: "stale", level: long ? "bad" : "warn",
+                                           text: "\(label): sem dados do jogo há \(max(minutes, 1)) min. A página pode ter travado: use Recarregar no app.",
+                                           notify: long))
+            case "crashed":
+                items.append(AttentionItem(key: "crashed|\(index)", account: index, kind: "crashed", level: "bad",
+                                           text: "\(label): a página do jogo fechou sozinha. O app está recarregando.", notify: true))
+            default:
+                break
+            }
+        }
+        return items
     }
 
     /// Ignored always, or in the hunt the account is on now (a new hunt brings the advice back).
@@ -336,7 +444,7 @@ public final class DashboardStore {
     public func mute(_ mute: String, always: Bool) -> Bool {
         queue.sync {
             let accounts = buildAccounts()
-            let items = Attention.evaluate(accounts: accounts, now: now().timeIntervalSince1970 * 1000)
+            let items = evaluate(accounts, now: now().timeIntervalSince1970 * 1000)
             guard let item = items.first(where: { $0.mute == mute }) else { return false }
             let hunt = always ? 0 : accounts.first { $0["index"] as? Int == item.account }.flatMap { number($0["huntStartedAt"]) } ?? 0
             guard always || hunt > 0 else { return false }
@@ -355,10 +463,16 @@ public final class DashboardStore {
     }
 
     private func buildAccounts() -> [[String: Any]] {
+        let nowMs = now().timeIntervalSince1970 * 1000
         let accounts = live.enumerated().map { index, entry -> [String: Any] in
             var out = entry
             out["index"] = index
             out["label"] = names[index]
+            out["trackedHuntId"] = nil
+            // Hunting, but the page has gone quiet: what it shows is old (frozen page, a game change that stopped the frames).
+            if entry["status"] as? String == "hunting", let updated = number(entry["updatedAt"]), nowMs - updated > Self.staleAfter * 1000 {
+                out["status"] = "stale"
+            }
             if let eventos = entry["missions"] as? [String: Any] {
                 out["daily"] = MissionAdvisor.evaluate(
                     eventos: eventos, live: entry["missionsLive"] as? [String: Any],
@@ -370,7 +484,7 @@ public final class DashboardStore {
                 out["daily"] = ["missions": [], "currentHunt": ["id": hunt.id, "title": hunt.title]] as [String: Any]
             }
             if entry["status"] as? String == "hunting", entry["training"] as? Bool != true,
-               let skills = skillAnalysis(entry) {
+               let skills = cachedSkillAnalysis(index, entry) {
                 out["skills"] = ManaBudget.apply(skills, averages: vitals[index]?.averages() ?? [:])
             }
             if entry["status"] as? String == "hunting", let tracker = vitals[index], var state = entry["state"] as? [String: Any],
@@ -428,8 +542,9 @@ public final class DashboardStore {
             let combat = GearAdvisor.combat(analyzer: account["analyzer"] as? [String: Any], hits: account["hits"] as? [String: Any])
             let gear = GearAdvisor.suggestions(for: index, members: members, combat: combat,
                                                perMember: GearAdvisor.combats(hits: account["hits"] as? [String: Any])) { type in
+                // Like the element alert: only when the monsters with known resistances are most of the kills.
                 let weighted = context.weighted(type)
-                return weighted.coverage > 0 ? weighted.multiplier : nil
+                return weighted.coverage >= SkillAdvisor.minAlertCoverage ? weighted.multiplier : nil
             }
             guard !gear.isEmpty else { return account }
             var out = account
@@ -438,42 +553,98 @@ public final class DashboardStore {
         }
     }
 
-    /// Per-account series of `[timestampMs, xpPerHour, lootPerHour, profitPerHour]`.
+    /// Per-account series of `[timestampMs, xpPerHour, lootPerHour, profitPerHour]`. Loot and profit per hour are null in a
+    /// hunt's first minutes (one drop over two minutes reads as millions per hour). Above 24 h the points are averaged
+    /// into buckets, about `maxHistoryPoints` per account.
     public func historyJSON(hours: Double) -> Data {
-        queue.sync {
-            var series: [String: [[Double]]] = [:]
+        typealias Point = (ts: Double, xp: Double, loot: Double?, profit: Double?)
+        let series: [String: [[Any]]] = queue.sync {
+            var points: [String: [Point]] = [:]
             let since = now().timeIntervalSince1970 - hours * 3600
             query("SELECT account, ts, elapsed_ms, xp_per_hour, loot_gold, supplies_gold FROM samples WHERE ts >= ? ORDER BY ts",
                   [.double(since)]) { row in
-                let elapsedHours = max(Double(sqlite3_column_int64(row, 2)) / 3_600_000, 1.0 / 60)
+                let elapsed = Double(sqlite3_column_int64(row, 2)), elapsedHours = max(elapsed / 3_600_000, 1.0 / 60)
                 let loot = Double(sqlite3_column_int64(row, 4)), supplies = Double(sqlite3_column_int64(row, 5))
-                series[String(sqlite3_column_int(row, 0)), default: []].append([
+                let early = elapsed < Self.minRateMs
+                points[String(sqlite3_column_int(row, 0)), default: []].append((
                     sqlite3_column_double(row, 1) * 1000, Double(sqlite3_column_int64(row, 3)),
-                    (loot / elapsedHours).rounded(), ((loot - supplies) / elapsedHours).rounded(),
-                ])
+                    early ? nil : (loot / elapsedHours).rounded(), early ? nil : ((loot - supplies) / elapsedHours).rounded()))
             }
-            return json(["hours": hours, "series": series])
+            let bucket = hours > 24 ? hours * 3_600_000 / Self.maxHistoryPoints : 0
+            return points.mapValues { list in
+                (bucket > 0 ? Self.averaged(list, bucketMs: bucket) : list).map { [$0.ts, $0.xp, $0.loot ?? NSNull(), $0.profit ?? NSNull()] }
+            }
+        }
+        return json(["hours": hours, "series": series])
+    }
+
+    private static func averaged(_ points: [(ts: Double, xp: Double, loot: Double?, profit: Double?)], bucketMs: Double)
+        -> [(ts: Double, xp: Double, loot: Double?, profit: Double?)] {
+        var out: [(ts: Double, xp: Double, loot: Double?, profit: Double?)] = []
+        var start = 0
+        func mean(_ values: [Double]) -> Double? { values.isEmpty ? nil : (values.reduce(0, +) / Double(values.count)).rounded() }
+        while start < points.count {
+            let key = (points[start].ts / bucketMs).rounded(.down)
+            var end = start
+            while end < points.count, (points[end].ts / bucketMs).rounded(.down) == key { end += 1 }
+            let slice = points[start..<end]
+            out.append((slice.map(\.ts).reduce(0, +) / Double(slice.count), mean(slice.map(\.xp)) ?? 0,
+                        mean(slice.compactMap(\.loot)), mean(slice.compactMap(\.profit))))
+            start = end
+        }
+        return out
+    }
+
+    /// Which finished hunts a list asks for; nil fields match everything.
+    public struct HuntFilter {
+        public var account: Int?
+        public var huntId: Int?
+        public var minMinutes: Double?
+        public init(account: Int? = nil, huntId: Int? = nil, minMinutes: Double? = nil) {
+            self.account = account
+            self.huntId = huntId
+            self.minMinutes = minMinutes
         }
     }
 
-    public func huntsJSON(limit: Int) -> Data {
-        queue.sync {
-            var hunts: [[String: Any]] = []
-            query("SELECT account, summary, rowid FROM runs ORDER BY ended_at DESC LIMIT ?", [.int(limit)]) { row in
-                guard let text = sqlite3_column_text(row, 1),
-                      var summary = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)) as? [String: Any]
-                else { return }
-                let account = Int(sqlite3_column_int(row, 0))
-                summary["id"] = Int(sqlite3_column_int64(row, 2))
-                summary["hasSetup"] = summary["setup"] != nil
-                summary["setup"] = nil
-                summary["account"] = account
-                summary["huntTitle"] = number(summary["huntId"]).flatMap { catalog.hunt(id: Int($0))?.title }
-                summary["label"] = names.indices.contains(account) ? names[account] : "Conta \(account + 1)"
-                hunts.append(summary)
+    /// Fields the level chart reads: a 500-hunt list in a few dozen KB instead of megabytes.
+    static let leanFields: Set<String> = ["huntId", "level", "elapsedSec", "balance", "suppliesGold", "xp", "killsTotal", "endedAt",
+                                          "reason", "deaths"]
+
+    public func huntsJSON(limit: Int) -> Data { huntsJSON(limit: limit, offset: 0, filter: HuntFilter(), lean: false) }
+
+    /// Newest first, with the total of hunts matching the filter (for pages). `lean` keeps only `leanFields`.
+    public func huntsJSON(limit: Int, offset: Int, filter: HuntFilter, lean: Bool) -> Data {
+        let page: (hunts: [[String: Any]], total: Int) = queue.sync {
+            let matching = allRuns().filter { run in
+                if let account = filter.account, run.account != account { return false }
+                if let huntId = filter.huntId, number(run.summary["huntId"]).map({ Int($0) }) != huntId { return false }
+                if let minutes = filter.minMinutes, (number(run.summary["elapsedSec"]) ?? 0) < minutes * 60 { return false }
+                return true
             }
-            return json(["hunts": hunts])
+            return (matching.dropFirst(offset).prefix(limit).map { listed($0, lean: lean) }, matching.count)
         }
+        return json(["hunts": page.hunts, "total": page.total])
+    }
+
+    /// One finished hunt as the lists show it, or nil when there is none with this id.
+    public func huntJSON(id: Int) -> Data? {
+        guard let hunt = queue.sync(execute: { allRuns().first { $0.id == id }.map { listed($0, lean: false) } }) else { return nil }
+        return json(["hunt": hunt])
+    }
+
+    private func listed(_ run: (account: Int, endedAt: Double, summary: [String: Any], id: Int), lean: Bool) -> [String: Any] {
+        var out = lean ? run.summary.filter { Self.leanFields.contains($0.key) } : run.summary
+        if !lean { out["hasSetup"] = run.summary["setup"] != nil }
+        // The page never reads these from a finished hunt: the setup has its own request, the rest stays in the database.
+        out["setup"] = nil
+        out["hits"] = nil
+        out["deathRisk"] = nil
+        out["id"] = run.id
+        out["account"] = run.account
+        out["huntTitle"] = number(run.summary["huntId"]).flatMap { catalog.hunt(id: Int($0))?.title }
+        out["label"] = names.indices.contains(run.account) ? names[run.account] : "Conta \(run.account + 1)"
+        return out
     }
 
     // MARK: Helpers
@@ -487,7 +658,43 @@ public final class DashboardStore {
     }
 
     private func json(_ object: Any) -> Data {
-        (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{}".utf8)
+        (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8)
+    }
+
+    /// Reuses what was derived from the finished hunts until one more is recorded (or 10 min pass, for the windows
+    /// that slide with the clock). Optional results are kept too, so "nothing to show" is not recomputed either.
+    func memoized<T>(_ key: String, _ make: () -> T) -> T {
+        if memoVersion != runsVersion || now().timeIntervalSince(memoSince) > 600 || now() < memoSince {
+            memo = [:]
+            memoVersion = runsVersion
+            memoSince = now()
+        }
+        if let hit = memo[key], let value = hit as? T { return value }
+        let value = make()
+        memo[key] = value as Any
+        return value
+    }
+
+    /// What the analyses keep of a finished hunt in memory: the gear (most of a run's size) and the per-creature hits stay
+    /// in the database; only the elements of the hits are read (the ranking's life drain share).
+    static func cacheable(_ summary: [String: Any]) -> [String: Any] {
+        var out = summary
+        if let members = summary["members"] as? [[String: Any]] { out["members"] = members.map { $0.filter { $0.key != "gear" } } }
+        if let hits = summary["hits"] as? [String: Any] { out["hits"] = hits["elements"].map { ["elements": $0] } }
+        return out
+    }
+
+    /// The collector sends a member's gear only when it changes: frames without it keep the gear already known.
+    static func keepingGear(_ state: Any, previous: Any?) -> Any {
+        guard var next = state as? [String: Any], var party = next["party"] as? [[String: Any]],
+              let old = (previous as? [String: Any])?["party"] as? [[String: Any]] else { return state }
+        var gear: [String: Any] = [:]
+        for member in old { if let name = member["name"] as? String, let items = member["gear"] { gear[name] = items } }
+        for index in party.indices where party[index]["gear"] == nil {
+            if let name = party[index]["name"] as? String, let items = gear[name] { party[index]["gear"] = items }
+        }
+        next["party"] = party
+        return next
     }
 
     private func jsonString(_ object: Any) -> String? {
@@ -496,13 +703,21 @@ public final class DashboardStore {
 
     private enum Value { case int(Int), double(Double), text(String) }
 
-    private func exec(_ sql: String) { sqlite3_exec(db, sql, nil, nil, nil) }
+    private func exec(_ sql: String) {
+        if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK { logError("exec") }
+    }
+
+    /// A failed write (full disk, locked database) would lose hunts in silence: leave a trace in the system log.
+    private func logError(_ what: String) {
+        let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "sem banco"
+        Self.logger.error("SQLite \(what, privacy: .public): \(message, privacy: .public)")
+    }
 
     private func run(_ sql: String, _ values: [Value]) { query(sql, values) { _ in } }
 
     private func query(_ sql: String, _ values: [Value], row: (OpaquePointer) -> Void) {
         var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return }
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else { logError("prepare"); return }
         defer { sqlite3_finalize(statement) }
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
         for (i, value) in values.enumerated() {
@@ -513,7 +728,9 @@ public final class DashboardStore {
             case .text(let v): sqlite3_bind_text(statement, index, v, -1, transient)
             }
         }
-        while sqlite3_step(statement) == SQLITE_ROW { row(statement) }
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW { row(statement); result = sqlite3_step(statement) }
+        if result != SQLITE_DONE { logError("step") }
     }
 }
 
@@ -523,17 +740,39 @@ extension DashboardStore {
     /// Runs shorter than this say little about a map's yield.
     static let minRankedSeconds = 300.0
 
+    /// Bounds the memory of the cache (a run without its gear is ~1–2 KB): years of hunts for four accounts.
+    static let maxCachedRuns = 20_000
+
     func allRuns() -> [(account: Int, endedAt: Double, summary: [String: Any], id: Int)] {
         if let runCache { return runCache }
         var runs: [(Int, Double, [String: Any], Int)] = []
-        query("SELECT account, ended_at, summary, rowid FROM runs ORDER BY ended_at DESC LIMIT 5000", []) { row in
+        query("SELECT account, ended_at, summary, rowid FROM runs ORDER BY ended_at DESC LIMIT \(Self.maxCachedRuns)", []) { row in
             guard let text = sqlite3_column_text(row, 2),
                   let summary = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)) as? [String: Any]
             else { return }
-            runs.append((Int(sqlite3_column_int(row, 0)), sqlite3_column_double(row, 1), summary, Int(sqlite3_column_int64(row, 3))))
+            runs.append((Int(sqlite3_column_int(row, 0)), sqlite3_column_double(row, 1), Self.cacheable(summary), Int(sqlite3_column_int64(row, 3))))
         }
         runCache = runs
+        runsVersion = max(runsVersion, runs.map(\.3).max() ?? 0)
         return runs
+    }
+
+    /// The account's finished hunts in the form the insights take, built once per recorded hunt.
+    func accountRuns(_ account: Int) -> [HuntInsights.Run] {
+        memoized("accountRuns|\(account)") { allRuns().filter { $0.account == account }.map { HuntInsights.Run(id: $0.id, summary: $0.summary) } }
+    }
+
+    /// The full stored summary of a hunt (with the gear the cache leaves out).
+    func storedSummary(id: Int) -> [String: Any]? {
+        queue.sync {
+            var summary: [String: Any]?
+            query("SELECT summary FROM runs WHERE rowid = ?", [.int(id)]) { row in
+                if let text = sqlite3_column_text(row, 0) {
+                    summary = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)) as? [String: Any]
+                }
+            }
+            return summary
+        }
     }
 
     /// How finished hunts on this map went near the current level (±`benchmarkLevels`), per account.
@@ -555,6 +794,10 @@ extension DashboardStore {
     }
 
     private func levelBenchmark(huntId: Int, level: Double) -> [String: Any]? {
+        memoized("benchmark|\(huntId)|\(level)") { computeBenchmark(huntId: huntId, level: level) }
+    }
+
+    private func computeBenchmark(huntId: Int, level: Double) -> [String: Any]? {
         struct Total { var runs = 0, seconds = 0.0, balance = 0.0, loot = 0.0, supplies = 0.0, kills = 0.0, taken = 0.0, low = Double.infinity, high = 0.0 }
         var totals: [Int: Total] = [:]
         for run in allRuns() {
@@ -590,7 +833,7 @@ extension DashboardStore {
 
     /// Yield per map, overall (`account: null`) and per account, from finished hunts.
     public func rankingJSON() -> Data {
-        queue.sync {
+        json(queue.sync { () -> [String: Any] in
             struct Total { var runs = 0, seconds = 0.0, xp = 0.0, balance = 0.0, kills = 0.0, deaths = 0.0, taken = 0.0, supplies = 0.0
                            // Damage of the hunts whose hits were measured, and the life drain in it (no item protects from it).
                            var measured = 0.0, drain = 0.0 }
@@ -630,62 +873,77 @@ extension DashboardStore {
                 if item.total.measured > 0 { row["lifeDrainShare"] = item.total.drain / item.total.measured }
                 return row
             }.sorted { ($0["profitPerHour"] as? Int ?? 0) > ($1["profitPerHour"] as? Int ?? 0) }
-            return json(["minMinutes": Int(Self.minRankedSeconds / 60), "rows": rows])
-        }
+            return ["minMinutes": Int(Self.minRankedSeconds / 60), "rows": rows]
+        })
     }
 
-    /// Totals per local calendar day and account; hunted time comes from the per-minute samples.
+    /// Totals per local calendar day and account. A finished hunt's XP, balance and kills are split by the share of its time in
+    /// each day (a hunt crossing midnight counts on both); its end, deaths and levels count on the day it ended. Hunted time
+    /// comes from the per-minute samples.
     public func dailyJSON(days: Int) -> Data {
-        queue.sync {
+        struct Cell { var xp = 0.0, balance = 0.0, kills = 0.0, runs = 0, deaths = 0.0, huntedSeconds = 0.0, levels = 0.0 }
+        let rows: [[String: Any]] = queue.sync {
             let calendar = Calendar.current
+            let today = calendar.startOfDay(for: now())
+            // Local midnights from the first day shown to the end of today; day i runs from starts[i] to starts[i + 1] (DST-safe).
+            let starts = (0...days).compactMap { calendar.date(byAdding: .day, value: $0 - (days - 1), to: today)?.timeIntervalSince1970 }
+            guard starts.count == days + 1 else { return [] }
+            func day(_ ts: Double) -> Int? {
+                guard ts >= starts[0], ts < starts[days] else { return nil }
+                var low = 0, high = days - 1
+                while low < high { let mid = (low + high + 1) / 2; if starts[mid] <= ts { low = mid } else { high = mid - 1 } }
+                return low
+            }
+            var cells = Array(repeating: [Int: Cell](), count: days)
+            for run in allRuns() where run.endedAt >= starts[0] {
+                let s = run.summary
+                let elapsed = max(number(s["elapsedSec"]) ?? 0, 0), begin = run.endedAt - elapsed
+                let xp = number(s["xp"]) ?? 0, balance = number(s["balance"]) ?? 0, kills = number(s["killsTotal"]) ?? 0
+                for index in 0..<days {
+                    let share = elapsed > 0 ? max(0, min(run.endedAt, starts[index + 1]) - max(begin, starts[index])) / elapsed
+                                            : (day(run.endedAt) == index ? 1 : 0)
+                    guard share > 0 else { continue }
+                    var cell = cells[index][run.account] ?? Cell()
+                    cell.xp += xp * share
+                    cell.balance += balance * share
+                    cell.kills += kills * share
+                    cells[index][run.account] = cell
+                }
+                guard let index = day(run.endedAt) else { continue }
+                var cell = cells[index][run.account] ?? Cell()
+                cell.runs += 1
+                cell.deaths += number(s["deaths"]) ?? 0
+                if let range = s["level"] as? [String: Any], let start = number(range["start"]), let end = number(range["end"]) {
+                    cell.levels += max(0, end - start)
+                }
+                cells[index][run.account] = cell
+            }
+            var previous: [Int: Double] = [:]
+            query("SELECT account, ts FROM samples WHERE ts >= ? ORDER BY ts", [.double(starts[0])]) { row in
+                let account = Int(sqlite3_column_int(row, 0)), ts = sqlite3_column_double(row, 1)
+                defer { previous[account] = ts }
+                guard let index = day(ts) else { return }
+                let gap = previous[account].map { ts - $0 } ?? Self.sampleInterval
+                cells[index][account, default: Cell()].huntedSeconds += gap <= 3 * Self.sampleInterval ? gap : Self.sampleInterval
+            }
             let formatter = DateFormatter()
             formatter.calendar = calendar
             formatter.timeZone = calendar.timeZone
             formatter.dateFormat = "yyyy-MM-dd"
-            let start = calendar.startOfDay(for: now().addingTimeInterval(-Double(days - 1) * 86400))
-            func day(_ ts: Double) -> String { formatter.string(from: Date(timeIntervalSince1970: ts)) }
-
-            struct Cell { var xp = 0.0, balance = 0.0, kills = 0.0, runs = 0, deaths = 0.0, huntedSeconds = 0.0, levels = 0.0 }
-            var cells: [String: [Int: Cell]] = [:]
-            for run in allRuns() where run.endedAt >= start.timeIntervalSince1970 {
-                let key = day(run.endedAt)
-                var cell = cells[key, default: [:]][run.account] ?? Cell()
-                cell.xp += number(run.summary["xp"]) ?? 0
-                cell.balance += number(run.summary["balance"]) ?? 0
-                cell.kills += number(run.summary["killsTotal"]) ?? 0
-                cell.deaths += number(run.summary["deaths"]) ?? 0
-                if let range = run.summary["level"] as? [String: Any], let start = number(range["start"]), let end = number(range["end"]) {
-                    cell.levels += max(0, end - start)
-                }
-                cell.runs += 1
-                cells[key, default: [:]][run.account] = cell
+            func json(_ cell: Cell) -> [String: Any] {
+                ["xp": Int(cell.xp.rounded()), "balance": Int(cell.balance.rounded()), "kills": Int(cell.kills.rounded()), "runs": cell.runs,
+                 "deaths": Int(cell.deaths), "huntedSeconds": Int(cell.huntedSeconds), "levels": Int(cell.levels)]
             }
-            var previous: (account: Int, ts: Double)?
-            query("SELECT account, ts FROM samples WHERE ts >= ? ORDER BY account, ts", [.double(start.timeIntervalSince1970)]) { row in
-                let account = Int(sqlite3_column_int(row, 0)), ts = sqlite3_column_double(row, 1)
-                let gap = previous.flatMap { $0.account == account ? ts - $0.ts : nil } ?? Self.sampleInterval
-                let key = day(ts)
-                var cell = cells[key, default: [:]][account] ?? Cell()
-                cell.huntedSeconds += gap <= 3 * Self.sampleInterval ? gap : Self.sampleInterval
-                cells[key, default: [:]][account] = cell
-                previous = (account, ts)
-            }
-            let rows = cells.keys.sorted(by: >).map { key -> [String: Any] in
-                let accounts = cells[key] ?? [:]
-                var perAccount: [String: Any] = [:]
-                for (account, cell) in accounts {
-                    perAccount[String(account)] = ["xp": Int(cell.xp), "balance": Int(cell.balance), "kills": Int(cell.kills), "runs": cell.runs,
-                                                   "deaths": Int(cell.deaths), "huntedSeconds": Int(cell.huntedSeconds), "levels": Int(cell.levels)]
-                }
+            return (0..<days).reversed().filter { !cells[$0].isEmpty }.map { index -> [String: Any] in
+                let accounts = cells[index]
                 let sum = accounts.values.reduce(Cell()) { Cell(xp: $0.xp + $1.xp, balance: $0.balance + $1.balance, kills: $0.kills + $1.kills,
-                                                                runs: $0.runs + $1.runs, deaths: $0.deaths + $1.deaths, huntedSeconds: $0.huntedSeconds + $1.huntedSeconds,
-                                                                levels: $0.levels + $1.levels) }
-                return ["date": key, "accounts": perAccount,
-                        "total": ["xp": Int(sum.xp), "balance": Int(sum.balance), "kills": Int(sum.kills), "runs": sum.runs,
-                                  "deaths": Int(sum.deaths), "huntedSeconds": Int(sum.huntedSeconds), "levels": Int(sum.levels)]]
+                                                                runs: $0.runs + $1.runs, deaths: $0.deaths + $1.deaths,
+                                                                huntedSeconds: $0.huntedSeconds + $1.huntedSeconds, levels: $0.levels + $1.levels) }
+                return ["date": formatter.string(from: Date(timeIntervalSince1970: starts[index] + 3600)),
+                        "accounts": Dictionary(uniqueKeysWithValues: accounts.map { (String($0.key), json($0.value)) }), "total": json(sum)]
             }
-            return json(["days": rows])
         }
+        return json(["days": rows])
     }
 
     // MARK: CSV
@@ -708,10 +966,17 @@ extension DashboardStore {
         return Data((lines.joined(separator: "\r\n") + "\r\n").utf8)
     }
 
+    /// Every finished hunt, read from the database (not the analyses' cache, which has a cap).
     public func huntsCSV() -> Data {
         queue.sync {
             let iso = ISO8601DateFormatter()
-            let rows = allRuns().map { run -> [Any?] in
+            var runs: [(account: Int, endedAt: Double, summary: [String: Any])] = []
+            query("SELECT account, ended_at, summary FROM runs ORDER BY ended_at DESC", []) { row in
+                guard let text = sqlite3_column_text(row, 2),
+                      let summary = try? JSONSerialization.jsonObject(with: Data(String(cString: text).utf8)) as? [String: Any] else { return }
+                runs.append((Int(sqlite3_column_int(row, 0)), sqlite3_column_double(row, 1), summary))
+            }
+            let rows = runs.map { run -> [Any?] in
                 let s = run.summary
                 let level = s["level"] as? [String: Any]
                 return [iso.string(from: Date(timeIntervalSince1970: run.endedAt)),
@@ -783,6 +1048,21 @@ extension DashboardStore {
         return SkillAdvisor.analyze(members: members, spells: spells, creatures: creatures, kills: kills, calibration: calibration)
     }
 
+    /// The skill analysis simulates hundreds of rotations per member; the party and the mix of monsters change slowly, so a
+    /// result is reused for `skillReuse` while they stay the same (kill shares to the nearest 5%).
+    func cachedSkillAnalysis(_ account: Int, _ entry: [String: Any]) -> [String: Any]? {
+        let kills = ((entry["analyzer"] as? [String: Any])?["kills"] as? [String: Any])?.compactMapValues { number($0) } ?? [:]
+        let total = max(kills.values.reduce(0, +), 1)
+        let mix = kills.sorted { $0.key < $1.key }.map { "\($0.key)=\(Int(($0.value / total * 20).rounded()))" }.joined(separator: ",")
+        let party = skillMembers(entry).map { "\($0.name)|\($0.level)|\($0.melee)|\($0.distance)|\($0.magic)|\($0.attack ?? 0)|\($0.kit)|\($0.minCreatures)" }
+        let key = "\(entry["huntId"] ?? "")|\(total >= 20)|\(party.joined(separator: ";"))|\(mix)"
+        if let cached = skillCache[account], cached.key == key, now().timeIntervalSince(cached.at) < Self.skillReuse,
+           now() >= cached.at { return cached.value }
+        let value = skillAnalysis(entry)
+        skillCache[account] = (now(), key, value)
+        return value
+    }
+
     func accumulateModel(account: Int, analyzer: [String: Any], at date: Date) {
         guard var state = modeled[account], state.valid else { return }
         let entry = live[account]
@@ -820,6 +1100,7 @@ extension DashboardStore {
                          sqlite3_column_double(row, 1)))
         }
         calibration = SkillAdvisor.calibrate(runs)
+        skillCache = [:]
     }
 }
 
@@ -1057,8 +1338,8 @@ extension DashboardStore {
 
     private func insights(account: Int, huntId: Int, level: Double, analyzer: [String: Any]?, setup: [String: [String: Any]],
                           party: [[String: Any]]) -> [String: Any]? {
-        let runs = allRuns().filter { $0.account == account }.map { HuntInsights.Run(id: $0.id, summary: $0.summary) }
-        guard let reference = HuntInsights.reference(runs: runs, huntId: huntId, level: level, now: now().timeIntervalSince1970 * 1000)
+        guard let reference = HuntInsights.reference(runs: accountRuns(account), huntId: huntId, level: level,
+                                                     now: now().timeIntervalSince1970 * 1000)
         else { return nil }
         return HuntInsights.evaluate(reference: reference, analyzer: analyzer, setup: setup, party: party)
     }
@@ -1068,6 +1349,10 @@ extension DashboardStore {
     static let whereLevels = 5.0
 
     func whereToHunt(level: Double, huntId: Int?) -> [String: Any]? {
+        memoized("where|\(level)|\(huntId ?? -1)") { computeWhereToHunt(level: level, huntId: huntId) }
+    }
+
+    private func computeWhereToHunt(level: Double, huntId: Int?) -> [String: Any]? {
         struct Total { var seconds = 0.0, xp = 0.0, balance = 0.0, taken = 0.0, deaths = 0.0, accounts = Set<Int>() }
         var totals: [Int: Total] = [:]
         let since = now().timeIntervalSince1970 - 60 * 86400
@@ -1099,30 +1384,42 @@ extension DashboardStore {
 
     /// The chance of a death in the next hour: the hunt's own losses of health once there are enough (calibrated by
     /// finished hunts), put together with the map's deaths near this level, which stand in alone before that.
-    func deathRisk(_ index: Int, _ entry: [String: Any]) -> [String: Any]? {
-        let runs = allRuns()
+    /// Deaths and hours of the finished hunts on the account's map near its level, and over every hunt. Every hunt counts,
+    /// short ones too: most deaths end a hunt in its first minutes, and leaving those out hid them.
+    func deathHistory(_ entry: [String: Any]) -> (deaths: Double, hours: Double, overall: Double, known: Bool, rate: Double) {
         let level = number(((entry["state"] as? [String: Any])?["character"] as? [String: Any])?["level"])
-        let huntId = number(entry["huntId"]).map { Int($0) }
-        var deaths = 0.0, hours = 0.0, allDeaths = 0.0, allHours = 0.0
-        for run in runs {
-            let s = run.summary
-            guard let seconds = number(s["elapsedSec"]), seconds >= Self.minRankedSeconds else { continue }
-            allDeaths += number(s["deaths"]) ?? 0
-            allHours += seconds / 3600
-            guard let level, number(s["huntId"]).map({ Int($0) }) == huntId, let range = s["level"] as? [String: Any], let end = number(range["end"]),
-                  abs(((number(range["start"]) ?? end) + end) / 2 - level) <= Self.whereLevels else { continue }
-            deaths += number(s["deaths"]) ?? 0
-            hours += seconds / 3600
+        let huntId = number(entry["huntId"] ?? entry["trackedHuntId"]).map { Int($0) }
+        return memoized("deathHistory|\(huntId ?? -1)|\(level ?? -1)") {
+            var deaths = 0.0, hours = 0.0, allDeaths = 0.0, allHours = 0.0
+            for run in allRuns() {
+                let s = run.summary
+                guard let seconds = number(s["elapsedSec"]), seconds > 0 else { continue }
+                allDeaths += number(s["deaths"]) ?? 0
+                allHours += seconds / 3600
+                guard let level, number(s["huntId"]).map({ Int($0) }) == huntId, let range = s["level"] as? [String: Any], let end = number(range["end"]),
+                      abs(((number(range["start"]) ?? end) + end) / 2 - level) <= Self.whereLevels else { continue }
+                deaths += number(s["deaths"]) ?? 0
+                hours += seconds / 3600
+            }
+            let overall = allHours > 0 ? allDeaths / allHours : 0
+            let known = huntId != nil && level != nil
+            let rate = (known ? DeathRisk.fromHistory(deaths: deaths, hours: hours, overallRate: overall)?["rate"] as? Double : nil) ?? overall
+            return (deaths, hours, overall, known, rate)
         }
-        let overall = allHours > 0 ? allDeaths / allHours : 0
-        let history = huntId == nil || level == nil ? nil : DeathRisk.fromHistory(deaths: deaths, hours: hours, overallRate: overall)
+    }
+
+    func deathRisk(_ index: Int, _ entry: [String: Any]) -> [String: Any]? {
+        let (deaths, hours, overall, known, _) = deathHistory(entry)
+        let history = known ? DeathRisk.fromHistory(deaths: deaths, hours: hours, overallRate: overall) : nil
         guard var live = risk[index]?.estimate(now: now()), let measured = live["rate"] as? Double else { return history }
-        let calibration = DeathRisk.calibration(runs.compactMap { run in
-            // Only hunts predicted by this model: the earlier ones expected far too many deaths.
-            (run.summary["deathRisk"] as? [String: Any]).flatMap { $0["model"] as? Int == DeathRisk.model ? number($0["expected"]) : nil }
-                .map { ($0, number(run.summary["deaths"]) ?? 0) }
-        })
-        let rate = DeathRisk.combined(live: measured * calibration.factor, deaths: deaths, hours: hours, overallRate: overall)
+        let calibration = memoized("deathCalibration") {
+            DeathRisk.calibration(allRuns().compactMap { run in
+                // Only hunts predicted by this model: the earlier ones expected far too many deaths.
+                (run.summary["deathRisk"] as? [String: Any]).flatMap { $0["model"] as? Int == DeathRisk.model ? number($0["expected"]) : nil }
+                    .map { ($0, number(run.summary["deaths"]) ?? 0) }
+            })
+        }
+        let rate = risk[index]!.combined(live: measured * calibration.factor, deaths: deaths, hours: hours, overallRate: overall, now: now())
         // Members keep their share of the party's live rate.
         live["members"] = (live["members"] as? [[String: Any]] ?? []).map { member in
             var out = member
@@ -1150,16 +1447,18 @@ extension DashboardStore {
                                   "healingShare": healed / taken, "suppliesPerThousand": supplies / taken * 1000]
         let level = number(((entry["state"] as? [String: Any])?["character"] as? [String: Any])?["level"])
         let huntId = number(entry["huntId"]).map { Int($0) }
-        var costs: [Double] = []
-        for run in allRuns() {
-            let s = run.summary
-            guard let level, number(s["huntId"]).map({ Int($0) }) == huntId, let seconds = number(s["elapsedSec"]), seconds >= Self.minBenchmarkSeconds,
-                  let runTaken = number(s["damageTaken"]), runTaken > 0, let range = s["level"] as? [String: Any], let end = number(range["end"]),
-                  abs(((number(range["start"]) ?? end) + end) / 2 - level) <= Self.whereLevels else { continue }
-            costs.append((number(s["suppliesGold"]) ?? 0) / runTaken * 1000)
+        let costs = memoized("healingCosts|\(huntId ?? -1)|\(level ?? -1)") { () -> [Double] in
+            var costs: [Double] = []
+            for run in allRuns() {
+                let s = run.summary
+                guard let level, number(s["huntId"]).map({ Int($0) }) == huntId, let seconds = number(s["elapsedSec"]), seconds >= Self.minBenchmarkSeconds,
+                      let runTaken = number(s["damageTaken"]), runTaken > 0, let range = s["level"] as? [String: Any], let end = number(range["end"]),
+                      abs(((number(range["start"]) ?? end) + end) / 2 - level) <= Self.whereLevels else { continue }
+                costs.append((number(s["suppliesGold"]) ?? 0) / runTaken * 1000)
+            }
+            return costs.sorted()
         }
         if costs.count >= 3 {
-            costs.sort()
             out["reference"] = ["median": costs[costs.count / 2], "best": costs[0], "runs": costs.count]
         }
         return out
@@ -1178,8 +1477,7 @@ extension DashboardStore {
     }
 
     private func plan(account: Int, level: Int, xp: Double, xpPerHour: Double, huntId: Int?) -> [String: Any]? {
-        let runs = allRuns().filter { $0.account == account }.map { HuntInsights.Run(id: $0.id, summary: $0.summary) }
-        return HuntInsights.levelPlan(level: level, xp: xp, xpPerHour: xpPerHour, huntId: huntId, runs: runs,
+        return HuntInsights.levelPlan(level: level, xp: xp, xpPerHour: xpPerHour, huntId: huntId, runs: accountRuns(account),
                                       now: now().timeIntervalSince1970 * 1000) { [catalog] id in catalog.hunt(id: id)?.title ?? "Hunt #\(id)" }
     }
 

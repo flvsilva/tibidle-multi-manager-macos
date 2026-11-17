@@ -140,8 +140,12 @@ public struct SpellCatalog {
 /// `percent` is a resistance: ≥100 immune, >0 resists, 0 neutral, <0 weak.
 public struct CreatureCatalog {
     public var resistance: [String: [String: Double]] = [:]   // lowercase name -> combatType -> resistance %
+    /// Health per creature (lowercase name), from the maps' monster lists: what a kill costs in damage.
+    public var health: [String: Double] = [:]
 
     public init() {}
+
+    public func health(of creature: String) -> Double? { health[creature.lowercased()] }
 
     public mutating func add(name: String, elements: [[String: Any]]) {
         var map: [String: Double] = [:]
@@ -178,19 +182,47 @@ public enum SkillAdvisor {
         public let minCreatures: [String: Int]
     }
 
+    /// Below this share of the hunt's damage going to monsters whose resistances are known, an element verdict
+    /// ("causa só 30% do dano") rests on too few of them to be said.
+    public static let minAlertCoverage = 0.5
+
     struct Context {
         init(spells: SpellCatalog, creatures: CreatureCatalog, kills: [String: Double], crowd: Int) {
             self.spells = spells; self.creatures = creatures; self.kills = kills; self.crowd = crowd
+            // Every simulation asks for the same few combat types: weigh the kills once per type.
+            var cache: [String: (multiplier: Double, coverage: Double)] = [:]
+            for type in Set(spells.spells.map(\.combatType)) { cache[type] = Self.weigh(type, creatures: creatures, kills: kills) }
+            self.cache = cache
         }
         let spells: SpellCatalog
         let creatures: CreatureCatalog
         let kills: [String: Double]
         let crowd: Int
+        private let cache: [String: (multiplier: Double, coverage: Double)]
+
+        /// The share of normal damage a combat type does to the hunt's monsters, and the share of the hunt's damage
+        /// that went to monsters whose resistances are known (the multiplier only averages those).
         func weighted(_ type: String) -> (multiplier: Double, coverage: Double) {
+            cache[type] ?? Self.weigh(type, creatures: creatures, kills: kills)
+        }
+
+        /// What a simulation should expect per cast: monsters of unknown resistance taken as neutral.
+        func expected(_ type: String) -> Double {
+            let (multiplier, coverage) = weighted(type)
+            return coverage * multiplier + (1 - coverage)
+        }
+
+        /// Damage goes into health: one kill of a dragon (8350) takes as much as ten of a lich (880), so each kind of
+        /// monster weighs by its kills times its health. Without the health of a monster, the average of the others
+        /// stands in; with none known, every kill weighs the same.
+        static func weigh(_ type: String, creatures: CreatureCatalog, kills: [String: Double]) -> (multiplier: Double, coverage: Double) {
+            let healths = kills.keys.compactMap { creatures.health(of: $0) }.filter { $0 > 0 }
+            let typical = healths.isEmpty ? 1 : healths.reduce(0, +) / Double(healths.count)
             var sum = 0.0, total = 0.0, known = 0.0
-            for (name, count) in kills {
-                total += count
-                if let m = creatures.multiplier(creature: name, type: type) { sum += m * count; known += count }
+            for (name, count) in kills where count > 0 {
+                let weight = count * (creatures.health(of: name).flatMap { $0 > 0 ? $0 : nil } ?? typical)
+                total += weight
+                if let m = creatures.multiplier(creature: name, type: type) { sum += m * weight; known += weight }
             }
             return known > 0 ? (sum / known, total > 0 ? known / total : 0) : (1, 0)
         }
@@ -212,35 +244,44 @@ public enum SkillAdvisor {
         var share: [String: Double] = [:]      // spell -> damage per second
     }
 
-    /// Greedy rotation: every shared-group tick the first spell, in priority order, that is off cooldown
-    /// and whose creature threshold the pull meets is cast (the game's own rule).
+    /// No cast frees a spell or a group sooner than this (guards spells without a cooldown).
+    static let minLockMs = 500.0
+
+    /// Greedy rotation: as soon as the kit can cast, the first spell in priority order that is ready and whose
+    /// creature threshold the pull meets is cast (the game's own rule). A cast locks the spell for its cooldown,
+    /// its group (all attacks) for the group cooldown and its secondary group for that one: the strong strikes
+    /// share "special" (8 s) and the ultimates "focus" (40 s), so two of them never go out back to back.
     static func simulate(kit: [String], member: Member, context: Context, seconds: Double = 120) -> Rotation {
         let spells = kit.compactMap { context.spells.spell(named: $0) }
         guard !spells.isEmpty else { return Rotation() }
-        let tick = max(500, spells.map(\.groupCooldownMs).min() ?? 2000)
         // Damage per cast is constant over the simulation: evaluate formulas and resistances once per spell.
-        var multipliers: [String: Double] = [:]
         let casts: [(spell: SpellCatalog.Spell, damage: Double)] = spells.compactMap { spell in
             guard Double(context.crowd) >= Double(member.minCreatures[spell.name] ?? 1),
                   let base = baseDamage(spell, member: member) else { return nil }
             let targets = spell.area ? Double(min(context.crowd, max(1, spell.areaCells))) : 1
-            let multiplier = multipliers[spell.combatType] ?? context.weighted(spell.combatType).multiplier
-            multipliers[spell.combatType] = multiplier
-            return (spell, base * multiplier * targets)
+            return (spell, base * context.expected(spell.combatType) * targets)
         }
-        var ready: [String: Double] = [:]
+        var ready: [String: Double] = [:], locked: [String: Double] = [:]
+        func free(_ spell: SpellCatalog.Spell) -> Double {
+            max(ready[spell.name] ?? 0, locked[spell.group] ?? 0, spell.secondaryGroup.map { locked[$0] ?? 0 } ?? 0)
+        }
         var rotation = Rotation()
         var time = 0.0, mana = 0.0
-        while time < seconds * 1000 {
-            for (spell, damage) in casts {
-                if (ready[spell.name] ?? 0) > time { continue }
+        let end = seconds * 1000
+        while time < end {
+            if let (spell, damage) = casts.first(where: { free($0.spell) <= time }) {
                 rotation.share[spell.name, default: 0] += damage
                 rotation.damagePerSecond += damage
                 mana += spell.mana
-                ready[spell.name] = time + max(spell.cooldownMs, tick)
-                break
+                ready[spell.name] = time + max(spell.cooldownMs, Self.minLockMs)
+                locked[spell.group] = time + max(spell.groupCooldownMs, Self.minLockMs)
+                if let secondary = spell.secondaryGroup {
+                    locked[secondary] = max(locked[secondary] ?? 0, time + max(spell.secondaryCooldownMs, Self.minLockMs))
+                }
             }
-            time += tick
+            // Jump to the next moment anything in the kit is ready (a cast always locks the group past now).
+            guard let next = casts.map({ free($0.spell) }).min(), next > time else { break }
+            time = next
         }
         rotation.damagePerSecond /= seconds
         rotation.share = rotation.share.mapValues { $0 / seconds }
@@ -311,10 +352,11 @@ public enum SkillAdvisor {
                                           "coverage": coverage, "mana": spell.mana, "cooldown": spell.cooldownMs / 1000,
                                           "dps": (current.share[spell.name] ?? 0) * calibration.factor]
                 if let base = baseDamage(spell, member: member) { row["perCast"] = base * multiplier }
-                if multiplier < 0.5 && coverage > 0.3 { row["warning"] = "Maioria dos alvos resiste a este elemento." }
+                if multiplier < 0.5 && coverage >= minAlertCoverage { row["warning"] = "Maioria dos alvos resiste a este elemento." }
                 else if (current.share[spell.name] ?? 0) == 0 && multiplier > 0 {
-                    row["warning"] = "Nunca dispara: uma skill de prioridade maior está sempre pronta ou o mínimo de criaturas não é atingido."
-                } else if multiplier >= 1.1 && coverage > 0.3 { row["note"] = "Elemento forte contra os alvos." }
+                    row["warning"] = "Nunca dispara: uma skill de prioridade maior (ou do mesmo grupo de recarga) está sempre pronta, " +
+                        "ou o mínimo de criaturas não é atingido."
+                } else if multiplier >= 1.1 && coverage >= minAlertCoverage { row["note"] = "Elemento forte contra os alvos." }
                 skills.append(row)
             }
             var entry: [String: Any] = ["name": member.name, "vocation": member.vocation, "skills": skills,
@@ -351,7 +393,8 @@ public enum SkillAdvisor {
                 guard gain >= 0.08 else { continue }
                 let manaDelta = rotation.manaPerMinute - current.manaPerMinute
                 found.append((gain, ["add": candidate.name, "replace": option.replaced as Any, "gain": gain, "fromZero": fromZero,
-                                     "manaPerMinuteDelta": manaDelta,
+                                     "manaPerMinuteDelta": manaDelta, "manaPerMinute": rotation.manaPerMinute,
+                                     "currentManaPerMinute": current.manaPerMinute,
                                      "multiplier": context.weighted(candidate.combatType).multiplier]))
             }
         }
@@ -420,9 +463,13 @@ public struct VitalsTracker {
 }
 
 /// A suggestion that spends more mana is worth less when the member already runs dry: it means more potions
-/// (supplies) or the rotation stalling. This marks those, using the hunt's average mana.
+/// (supplies) or the rotation stalling. For those members the mana spent now is taken as all there is: a kit that
+/// wants more casts proportionally less, so its gain is what it does with the same mana (`gain`, the simulated one
+/// kept as `rawGain`), and a swap that is no longer worth it is dropped.
 public enum ManaBudget {
     public static let low = 0.25
+    /// The smallest gain a suggestion needs (as in `SkillAdvisor.suggestions`).
+    static let minGain = 0.08
 
     public static func apply(_ analysis: [String: Any], averages: [String: Double]) -> [String: Any] {
         guard !averages.isEmpty, let members = analysis["members"] as? [[String: Any]] else { return analysis }
@@ -433,14 +480,29 @@ public enum ManaBudget {
             var out = member
             out["manaAverage"] = average
             if average < low, let suggestions = member["suggestions"] as? [[String: Any]] {
-                out["suggestions"] = suggestions.map { suggestion -> [String: Any] in
+                var adjusted = false
+                let kept = suggestions.compactMap { suggestion -> [String: Any]? in
                     var item = suggestion
-                    if ((suggestion["manaPerMinuteDelta"] as? NSNumber)?.doubleValue ?? 0) > 0 { item["manaLimited"] = true }
+                    guard number(suggestion["manaPerMinuteDelta"]) > 0 else { return item }
+                    item["manaLimited"] = true
+                    let now = number(suggestion["currentManaPerMinute"]), then = number(suggestion["manaPerMinute"])
+                    guard suggestion["fromZero"] as? Bool != true, now > 0, then > now, let gain = suggestion["gain"] as? Double else { return item }
+                    adjusted = true
+                    let sustainable = (1 + gain) * now / then - 1
+                    guard sustainable >= minGain else { return nil }
+                    item["rawGain"] = gain
+                    item["gain"] = sustainable
                     return item
                 }
+                // Best first again, ties in their original order.
+                out["suggestions"] = adjusted
+                    ? kept.enumerated().sorted { (number($0.element["gain"]), -$0.offset) > (number($1.element["gain"]), -$1.offset) }.map(\.element)
+                    : kept
             }
             return out
         }
         return result
     }
+
+    private static func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }
 }

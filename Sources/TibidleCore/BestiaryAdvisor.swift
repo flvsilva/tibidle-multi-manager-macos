@@ -1,7 +1,7 @@
 import Foundation
 
 /// Per-hunt bestiary milestones from the game's public `/hunts/select`: every map has three kill
-/// thresholds that unlock a permanent bonus. Also carries each map's monsters with their resistances.
+/// thresholds that unlock a permanent bonus. Also carries each map's monsters with their resistances and health.
 public struct HuntBestiaryCatalog {
     public struct Entry: Equatable {
         public let id: Int
@@ -44,6 +44,9 @@ public struct HuntBestiaryCatalog {
             for monster in hunt["monsters"] as? [[String: Any]] ?? [] {
                 if let name = monster["name"] as? String, let elements = monster["elements"] as? [[String: Any]] {
                     creatures.add(name: name, elements: elements)
+                }
+                if let name = monster["name"] as? String, let health = (monster["health"] as? NSNumber)?.doubleValue, health > 0 {
+                    creatures.health[name.lowercased()] = health
                 }
             }
         }

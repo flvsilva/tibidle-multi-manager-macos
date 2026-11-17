@@ -84,13 +84,15 @@ public enum Attention {
                 items.append(AttentionItem(key: "\(kind)|\(i)|\(alert["level"] ?? "")", account: i, kind: kind,
                                            level: alert["level"] ?? "warn", text: "\(label): \(text)", notify: alert["level"] == "bad"))
             }
+            // Only a setup with a few hunts behind it sets the bar: one lucky hunt with another setup is no reason.
             if status == "hunting", let insights = entry["insights"] as? [String: Any], let drop = insights["drop"] as? Double,
                drop >= HuntInsights.dropWarning, let reference = insights["reference"] as? [String: Any],
+               Int(number(reference["runs"] ?? 1)) >= HuntInsights.minRuns,
                let changes = insights["changes"] as? [[String: Any]], !changes.isEmpty {
                 let who = changes.compactMap { $0["label"] as? String }.joined(separator: ", ")
                 items.append(AttentionItem(key: "setup-drop|\(i)|\(reference["id"] ?? "")", account: i, kind: "setup", level: "warn",
-                                           text: "\(label): lucro/h \(Int((drop * 100).rounded()))% abaixo da sua melhor hunt recente aqui " +
-                                                 "(\(money(reference["profitPerHour"]))/h, \(day(number(reference["endedAt"])))), com outro setup (\(who)).",
+                                           text: "\(label): lucro/h \(Int((drop * 100).rounded()))% abaixo do que o seu melhor setup costuma render aqui " +
+                                                 "(\(money(reference["profitPerHour"]))/h, mediana de \(Int(number(reference["runs"]))) hunts), com outro setup (\(who)).",
                                            notify: true))
             }
             if status == "hunting" { items += skillItems(entry, account: i, label: label) }
@@ -198,7 +200,9 @@ public enum Attention {
             let who = sameName ? vocation : "\(member["name"] as? String ?? "") (\(vocation))"
             for skill in member["skills"] as? [[String: Any]] ?? [] {
                 let multiplier = number(skill["multiplier"])
-                guard multiplier < weakElement, number(skill["dps"]) > 0, let name = skill["name"] as? String else { continue }
+                // Said only when most of the hunt's damage went to monsters whose resistances are known.
+                guard multiplier < weakElement, number(skill["dps"]) > 0, number(skill["coverage"] ?? 1) >= SkillAdvisor.minAlertCoverage,
+                      let name = skill["name"] as? String else { continue }
                 let element = elements[skill["element"] as? String ?? ""].map { " (\($0))" } ?? ""
                 items.append(AttentionItem(key: "element|\(i)|\(vocation)|\(name)", account: i, kind: "element", level: "warn",
                                            text: "\(label) · \(who): \(name)\(element) causa só \(Int((multiplier * 100).rounded()))% do dano nos monstros desta hunt " +
@@ -218,12 +222,6 @@ public enum Attention {
     private static func clock(_ ms: Double) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
-        return formatter.string(from: Date(timeIntervalSince1970: ms / 1000))
-    }
-
-    private static func day(_ ms: Double) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "dd/MM HH:mm"
         return formatter.string(from: Date(timeIntervalSince1970: ms / 1000))
     }
 

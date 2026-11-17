@@ -44,6 +44,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     private var statuses = Array(repeating: "Preparando…", count: accountCount)
     private var selected = 0
     private var clickMonitor: Any?
+    private var statusTimer: Timer?
+    /// The dashboard's network access was switched in the menu (true: the network can open it).
+    var onDashboardNetworkChange: ((Bool) -> Void)?
+    var dashboardOnNetwork: Bool { settings.dashboardOnNetwork }
 
     private let tabStrip = NSStackView()
     private let host = BrowserHostView()
@@ -85,14 +89,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             let session = BrowserSession(account: account, dashboard: dashboard)
             session.displayName = { [unowned self] in settings.accounts[account].name }
             session.onStatus = { [weak self] text in self?.setStatus(account, text) }
+            session.onNeedsAttention = { [weak self] in if self?.selected != account { self?.select(account) } }
             session.setMuted(settings.accounts[account].muted)
             panes[account].content.addSubview(session.webView)
             sessions.append(session)
         }
         applyTabOrder()
+        applyColorSpace()
         select(settings.selectedTab)
-        // The selected account loads first, then the others.
-        ([selected] + (0..<accountCount).filter { $0 != selected }).forEach { sessions[$0].start() }
+        // The selected account loads first; the others follow a moment apart, not all at once.
+        sessions[selected].start()
+        for (step, account) in (0..<accountCount).filter({ $0 != selected }).enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5 * Double(step + 1)) { [weak self] in self?.sessions[account].start() }
+        }
+        let statusTimer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in self?.refreshStatusDots() }
+        RunLoop.main.add(statusTimer, forMode: .common)
+        self.statusTimer = statusTimer
 
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             self?.selectPane(under: event)
@@ -204,6 +216,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         host.panes = settings.tabOrder.map { panes[$0] }
         host.viewLayout = settings.layout
         host.selectedPosition = settings.tabOrder.firstIndex(of: account) ?? 0
+        applyZoom()
         for i in 0..<accountCount {
             let isSelected = i == account
             for button in [tabs[i], panes[i].header] {
@@ -228,6 +241,41 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         if let index = panes.firstIndex(where: { !$0.isHidden && $0.frame.contains(point) }), index != selected {
             select(index)
         }
+    }
+
+    /// Each page gets the zoom its account had at this pane size (a small 1 + 3 pane remembers its own).
+    private func applyZoom() {
+        guard sessions.count == accountCount else { return }
+        for (position, account) in settings.tabOrder.enumerated() {
+            let zoom = settings.accounts[account].zoom(for: PaneSize.of(position: position, in: settings.layout))
+            if sessions[account].webView.pageZoom != zoom { sessions[account].webView.pageZoom = zoom }
+        }
+    }
+
+    private func paneSize(of account: Int) -> PaneSize {
+        PaneSize.of(position: settings.tabOrder.firstIndex(of: account) ?? 0, in: settings.layout)
+    }
+
+    private func setZoom(_ zoom: Double) {
+        let value = min(max((zoom * 10).rounded() / 10, AccountSettings.zoomRange.lowerBound), AccountSettings.zoomRange.upperBound)
+        settings.accounts[selected].zoom[paneSize(of: selected).rawValue] = value == 1 ? nil : value
+        sessions[selected].webView.pageZoom = value
+        save()
+    }
+
+    private func refreshStatusDots() {
+        dashboard.statuses { [weak self] list in
+            guard let self else { return }
+            for (account, status) in list.enumerated() where account < accountCount {
+                let color = Theme.statusColor(status)
+                tabs[account].dot = color
+                panes[account].header.dot = color
+            }
+        }
+    }
+
+    private func applyColorSpace() {
+        window?.colorSpace = settings.srgbColors ? .sRGB : nil
     }
 
     private func applyTabOrder() {
@@ -284,10 +332,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(setLayout(_:)) {
-            menuItem.state = menuItem.tag == settings.layout.tag ? .on : .off
+        switch menuItem.action {
+        case #selector(setLayout(_:)): menuItem.state = menuItem.tag == settings.layout.tag ? .on : .off
+        case #selector(toggleSRGB(_:)): menuItem.state = settings.srgbColors ? .on : .off
+        case #selector(toggleDashboardNetwork(_:)): menuItem.state = settings.dashboardOnNetwork ? .on : .off
+        default: break
         }
         return true
+    }
+
+    /// Draws the pages in sRGB instead of the monitor's profile: on some monitors the GPU process spends most of its time
+    /// converting colors. Takes effect at once; the colors may look slightly different on a wide-gamut screen.
+    @objc func toggleSRGB(_ sender: Any?) {
+        settings.srgbColors.toggle()
+        applyColorSpace()
+        save()
+    }
+
+    @objc func toggleDashboardNetwork(_ sender: Any?) {
+        settings.dashboardOnNetwork.toggle()
+        save()
+        onDashboardNetworkChange?(settings.dashboardOnNetwork)
     }
 
     @objc func toggleSound(_ sender: Any?) {
@@ -315,9 +380,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         }
     }
 
-    @objc func zoomIn(_ sender: Any?) { sessions[selected].webView.pageZoom = min(sessions[selected].webView.pageZoom + 0.1, 3) }
-    @objc func zoomOut(_ sender: Any?) { sessions[selected].webView.pageZoom = max(sessions[selected].webView.pageZoom - 0.1, 0.3) }
-    @objc func zoomReset(_ sender: Any?) { sessions[selected].webView.pageZoom = 1 }
+    @objc func zoomIn(_ sender: Any?) { setZoom(sessions[selected].webView.pageZoom + 0.1) }
+    @objc func zoomOut(_ sender: Any?) { setZoom(sessions[selected].webView.pageZoom - 0.1) }
+    @objc func zoomReset(_ sender: Any?) { setZoom(1) }
 
     @objc private func saveName(_ sender: Any?) {
         let name = String(nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).prefix(AppSettings.maxNameLength))
@@ -332,7 +397,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     }
 
     func showDashboardAddress(_ urls: [String]) {
-        dashboardLabel.stringValue = urls.first.map { "Dashboard: \($0)" } ?? ""
+        if settings.dashboardOnNetwork {
+            dashboardLabel.stringValue = urls.first.map { "Dashboard: \($0)" } ?? ""
+        } else {
+            dashboardLabel.stringValue = urls.last.map { "Dashboard: \($0) (só neste Mac)" } ?? ""
+        }
         dashboardLabel.toolTip = urls.joined(separator: "\n")
     }
 
@@ -354,6 +423,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
 
     func windowWillClose(_ notification: Notification) {
         save()
+        statusTimer?.invalidate()
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         sessions.forEach { $0.closePopups() }
     }
