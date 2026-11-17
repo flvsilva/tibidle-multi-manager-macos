@@ -22,7 +22,7 @@ Cada pessoa entra com suas próprias contas diretamente no site do jogo. Não h�
 
 1. **Login:** abra cada aba e entre na conta desejada no site do jogo.
 2. **Nome:** altere **Nome da conta** e clique em **Salvar nome** (ou Enter).
-3. **Visualização:** **4 telas** mostra a grade 2 × 2; **Tela normal** amplia a conta selecionada (`⇧⌘G`).
+3. **Visualização:** **Tela normal** amplia a conta selecionada; **1 + 3** mostra a primeira aba grande à esquerda e as outras três menores ao lado (arraste uma aba para o começo para trocar a principal); **4 telas** mostra a grade 2 × 2. `⇧⌘G` passa de uma para a outra.
 4. **Ordem:** arraste uma aba sobre outra. A ordem é salva na hora e vale na grade da esquerda para a direita, de cima para baixo.
 5. **Seleção:** use a aba, o título do bloco ou clique no jogo. Som (`⇧⌘M`) e Recarregar (`⌘R`) atuam na conta selecionada; `⌘1` a `⌘4` selecionam as posições atuais.
 6. **Dashboard:** **Dashboard → Abrir dashboard** (`⇧⌘D`).

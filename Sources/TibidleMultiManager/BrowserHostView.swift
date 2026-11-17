@@ -1,7 +1,7 @@
 import AppKit
 import TibidleCore
 
-/// One account cell: a header (grid view only) above the page.
+/// One account cell: a header (multi-pane views only) above the page.
 final class PaneView: NSView {
     let header: FlatButton
     let content = NSView()
@@ -26,18 +26,18 @@ final class PaneView: NSView {
     }
 }
 
-/// Places panes as a single view or a 2 × 2 grid. Panes are never removed from the
+/// Places panes as a single view, one large beside three small, or a 2 × 2 grid. Panes are never removed from the
 /// hierarchy, so switching views or reordering never reloads a page.
 final class BrowserHostView: NSView {
     var panes: [PaneView] = [] { didSet { panes.forEach { if $0.superview !== self { addSubview($0) } }; needsLayout = true } }
-    var grid = false { didSet { needsLayout = true } }
+    var viewLayout = ViewLayout.single { didSet { needsLayout = true } }
     var selectedPosition = 0 { didSet { needsLayout = true } }
 
     override func layout() {
         super.layout()
-        let frames = BrowserLayout.frames(count: panes.count, in: bounds, grid: grid, selectedPosition: selectedPosition)
+        let frames = BrowserLayout.frames(count: panes.count, in: bounds, layout: viewLayout, selectedPosition: selectedPosition)
         for (pane, frame) in zip(panes, frames) {
-            pane.showsHeader = grid
+            pane.showsHeader = viewLayout != .single
             pane.isHidden = frame == nil
             if let frame { pane.frame = frame }
         }

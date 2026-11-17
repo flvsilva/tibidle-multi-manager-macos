@@ -18,24 +18,42 @@ public struct AccountSettings: Codable, Equatable {
     }
 }
 
+/// How the account panes share the window. The case order is the order of the buttons and of ⇧⌘G.
+public enum ViewLayout: String, Codable, CaseIterable {
+    /// Only the selected account, full size.
+    case single
+    /// The first account in tab order large on the left, the other three stacked on the right.
+    case featured
+    /// 2 × 2 grid.
+    case grid
+}
+
 public struct AppSettings: Codable, Equatable {
     public var accounts: [AccountSettings]
     public var selectedTab: Int
-    public var gridView: Bool
+    public var layout: ViewLayout
     public var tabOrder: [Int]
 
     public init() {
         accounts = []
         selectedTab = 0
-        gridView = false
+        layout = .single
         tabOrder = Array(0..<accountCount)
     }
+
+    /// Settings saved before `layout` existed only had the grid on or off.
+    private enum LegacyKeys: String, CodingKey { case gridView }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         accounts = (try? c.decodeIfPresent([AccountSettings].self, forKey: .accounts)) ?? []
         selectedTab = (try? c.decodeIfPresent(Int.self, forKey: .selectedTab)) ?? 0
-        gridView = (try? c.decodeIfPresent(Bool.self, forKey: .gridView)) ?? false
+        if let saved = try? c.decodeIfPresent(ViewLayout.self, forKey: .layout) {
+            layout = saved
+        } else {
+            let legacy = try? decoder.container(keyedBy: LegacyKeys.self)
+            layout = (try? legacy?.decodeIfPresent(Bool.self, forKey: .gridView)) == true ? .grid : .single
+        }
         tabOrder = (try? c.decodeIfPresent([Int].self, forKey: .tabOrder)) ?? []
     }
 

@@ -1,7 +1,40 @@
 import AppKit
 import TibidleCore
 
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
+extension ViewLayout {
+    var title: String {
+        switch self {
+        case .single: return "Tela normal"
+        case .featured: return "1 + 3"
+        case .grid: return "4 telas"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .single: return "▣"
+        case .featured: return "◧"
+        case .grid: return "▦"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .single: return "Mostrar só a conta selecionada"
+        case .featured: return "A primeira aba grande e as outras três ao lado • arraste uma aba para o começo para trocar a principal"
+        case .grid: return "As quatro contas em grade 2 × 2"
+        }
+    }
+
+    /// Menu items and buttons carry the case as their tag.
+    var tag: Int { Self.allCases.firstIndex(of: self)! }
+    init?(tag: Int) {
+        guard Self.allCases.indices.contains(tag) else { return nil }
+        self = Self.allCases[tag]
+    }
+}
+
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate, NSMenuItemValidation {
     private let store: SettingsStore
     private let dashboard: DashboardStore
     private var settings: AppSettings
@@ -16,7 +49,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     private let host = BrowserHostView()
     private let nameField = NSTextField()
     private let statusLabel = NSTextField(labelWithString: "Preparando os quatro perfis…")
-    private lazy var layoutButton = FlatButton(title: "", target: self, action: #selector(toggleLayout(_:)))
+    private lazy var layoutButtons: [FlatButton] = ViewLayout.allCases.map { layout in
+        let button = FlatButton(title: "\(layout.symbol)  \(layout.title)", target: self, action: #selector(setLayout(_:)))
+        button.tag = layout.tag
+        button.toolTip = layout.help
+        button.padding.width = 10
+        return button
+    }
     private lazy var soundButton = FlatButton(title: "", target: self, action: #selector(toggleSound(_:)))
     private lazy var clearButton = FlatButton(title: "Limpar sessão", target: self, action: #selector(clearSession(_:)))
     private lazy var reloadButton = FlatButton(title: "↻  Recarregar", target: self, action: #selector(reloadSelected(_:)))
@@ -83,9 +122,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         tabStrip.orientation = .horizontal
         tabStrip.spacing = 6
 
-        layoutButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
-        layoutButton.toolTip = "Alternar entre uma conta e quatro contas em grade"
-        let topBar = bar(Theme.topBar, [tabStrip, NSView(), layoutButton], height: 52)
+        let layoutStrip = NSStackView(views: layoutButtons)
+        layoutStrip.orientation = .horizontal
+        layoutStrip.spacing = 4
+        let topBar = bar(Theme.topBar, [tabStrip, NSView(), layoutStrip], height: 52)
 
         let nameLabel = NSTextField(labelWithString: "Nome da conta")
         nameLabel.textColor = Theme.mutedText
@@ -162,7 +202,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         selected = account
         settings.selectedTab = account
         host.panes = settings.tabOrder.map { panes[$0] }
-        host.grid = settings.gridView
+        host.viewLayout = settings.layout
         host.selectedPosition = settings.tabOrder.firstIndex(of: account) ?? 0
         for i in 0..<accountCount {
             let isSelected = i == account
@@ -183,7 +223,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     }
 
     private func selectPane(under event: NSEvent) {
-        guard event.window === window, settings.gridView else { return }
+        guard event.window === window, settings.layout != .single else { return }
         let point = host.convert(event.locationInWindow, from: nil)
         if let index = panes.firstIndex(where: { !$0.isHidden && $0.frame.contains(point) }), index != selected {
             select(index)
@@ -205,7 +245,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     }
 
     private func refreshControls() {
-        layoutButton.title = settings.gridView ? "▣  Tela normal" : "▦  4 telas"
+        for button in layoutButtons {
+            let isCurrent = button.tag == settings.layout.tag
+            button.fill = isCurrent ? Theme.selectedBackground : Theme.tabBackground
+            button.stroke = isCurrent ? Theme.selectedBorder : Theme.tabBorder
+        }
         statusLabel.stringValue = "\(settings.accounts[selected].name)  •  \(statuses[selected])"
         soundButton.title = settings.accounts[selected].muted ? "Som: desligado" : "Som: ligado"
         soundButton.isEnabled = BrowserSession.canMute
@@ -220,10 +264,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
 
     @objc private func tabClicked(_ sender: NSButton) { select(sender.tag) }
 
-    @objc func toggleLayout(_ sender: Any?) {
-        settings.gridView.toggle()
+    /// From a layout button or a Visualizar menu item; the tag says which layout.
+    @objc func setLayout(_ sender: Any?) {
+        let tag = (sender as? NSMenuItem)?.tag ?? (sender as? NSControl)?.tag ?? 0
+        guard let layout = ViewLayout(tag: tag) else { return }
+        apply(layout)
+    }
+
+    /// ⇧⌘G: Tela normal → 1 + 3 → 4 telas → Tela normal.
+    @objc func nextLayout(_ sender: Any?) {
+        apply(ViewLayout(tag: settings.layout.tag + 1) ?? ViewLayout.allCases[0])
+    }
+
+    private func apply(_ layout: ViewLayout) {
+        guard layout != settings.layout else { return }
+        settings.layout = layout
         select(selected)
         save()
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(setLayout(_:)) {
+            menuItem.state = menuItem.tag == settings.layout.tag ? .on : .off
+        }
+        return true
     }
 
     @objc func toggleSound(_ sender: Any?) {

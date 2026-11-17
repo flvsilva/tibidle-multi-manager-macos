@@ -35,7 +35,7 @@ final class CoreTests: XCTestCase {
         var settings = store.load()
         settings.accounts[1].name = "Druid"
         settings.accounts[2].muted = true
-        settings.gridView = true
+        settings.layout = .featured
         settings.tabOrder = [3, 2, 1, 0]
         try store.save(settings)
         XCTAssertEqual(store.load(), settings)
@@ -48,16 +48,33 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(Set(ProfileIdentity.identifiers).count, accountCount)
     }
 
+    func testLegacyGridSettingBecomesLayout() throws {
+        let decode = { (json: String) in try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8)).layout }
+        XCTAssertEqual(try decode(#"{"gridView":true}"#), .grid)
+        XCTAssertEqual(try decode(#"{"gridView":false}"#), .single)
+        XCTAssertEqual(try decode(#"{}"#), .single)
+        XCTAssertEqual(try decode(#"{"gridView":true,"layout":"featured"}"#), .featured)
+        XCTAssertEqual(try decode(#"{"gridView":true,"layout":"bogus"}"#), .grid)
+    }
+
     func testLayout() {
         let bounds = CGRect(x: 0, y: 0, width: 1006, height: 806)
-        let single = BrowserLayout.frames(count: 4, in: bounds, grid: false, selectedPosition: 2)
+        let single = BrowserLayout.frames(count: 4, in: bounds, layout: .single, selectedPosition: 2)
         XCTAssertEqual(single.compactMap { $0 }.count, 1)
         XCTAssertEqual(single[2], bounds)
 
-        let grid = BrowserLayout.frames(count: 4, in: bounds, grid: true, selectedPosition: 0).map { $0! }
+        let grid = BrowserLayout.frames(count: 4, in: bounds, layout: .grid, selectedPosition: 0).map { $0! }
         XCTAssertEqual(grid[0], CGRect(x: 6, y: 406, width: 494, height: 394)) // top-left
         XCTAssertEqual(grid[1], CGRect(x: 506, y: 406, width: 494, height: 394)) // top-right
         XCTAssertEqual(grid[2], CGRect(x: 6, y: 6, width: 494, height: 394)) // bottom-left
         XCTAssertEqual(grid[3], CGRect(x: 506, y: 6, width: 494, height: 394)) // bottom-right
+
+        // 1 + 3: 1200 of width after the gaps, 800 for the main pane and 400 for the column.
+        let wide = CGRect(x: 0, y: 0, width: 1218, height: 810)
+        let featured = BrowserLayout.frames(count: 4, in: wide, layout: .featured, selectedPosition: 3).map { $0! }
+        XCTAssertEqual(featured[0], CGRect(x: 6, y: 6, width: 800, height: 798)) // main, full height
+        XCTAssertEqual(featured[1], CGRect(x: 812, y: 542, width: 400, height: 262)) // top-right
+        XCTAssertEqual(featured[2], CGRect(x: 812, y: 274, width: 400, height: 262))
+        XCTAssertEqual(featured[3], CGRect(x: 812, y: 6, width: 400, height: 262)) // bottom-right
     }
 }

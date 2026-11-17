@@ -94,7 +94,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         edit.addItem(withTitle: "Selecionar tudo", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
         let view = submenu(main, "Visualizar")
-        view.addItem(item("Alternar 1 / 4 telas", #selector(MainWindowController.toggleLayout(_:)), "g", [.command, .shift]))
+        for layout in ViewLayout.allCases {
+            let entry = NSMenuItem(title: layout.title, action: #selector(MainWindowController.setLayout(_:)), keyEquivalent: "")
+            entry.tag = layout.tag
+            view.addItem(entry)
+        }
+        view.addItem(item("Alternar visualização", #selector(MainWindowController.nextLayout(_:)), "g", [.command, .shift]))
         view.addItem(.separator())
         view.addItem(withTitle: "Aumentar zoom", action: #selector(MainWindowController.zoomIn(_:)), keyEquivalent: "+")
         view.addItem(withTitle: "Diminuir zoom", action: #selector(MainWindowController.zoomOut(_:)), keyEquivalent: "-")
